@@ -143,6 +143,15 @@ export async function isEmailAllowed(email: string): Promise<boolean> {
   return Boolean(rpcResult.data)
 }
 
+export async function currentUserIsAdmin(): Promise<boolean> {
+  const supabase = getSupabaseClient()
+  const { data, error } = await supabase.rpc('current_user_is_admin')
+  if (error) {
+    throw error
+  }
+  return Boolean(data)
+}
+
 export async function requestOtp(email: string): Promise<void> {
   const supabase = getSupabaseClient()
   const normalizedEmail = normalizeEmail(email)

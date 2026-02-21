@@ -6,6 +6,7 @@ import {
   createDataset,
   getCurrentSession,
   insertFlights,
+  currentUserIsAdmin,
   isSupabaseConfigured,
   listDatasets,
   loadDataset,
@@ -476,6 +477,7 @@ function App() {
   const supabaseConfigured = isSupabaseConfigured()
   const [mode, setMode] = useState<AppMode>(supabaseConfigured ? 'supabase' : 'guest')
   const [session, setSession] = useState<Session | null>(null)
+  const [isAdminUser, setIsAdminUser] = useState(mode === 'guest')
 
   const [authEmail, setAuthEmail] = useState('')
   const [otpCode, setOtpCode] = useState('')
@@ -703,6 +705,37 @@ function App() {
     }
   }, [mode, supabaseConfigured])
 
+  useEffect(() => {
+    if (mode === 'guest') {
+      setIsAdminUser(true)
+      return
+    }
+
+    if (!session) {
+      setIsAdminUser(false)
+      return
+    }
+
+    let cancelled = false
+
+    void currentUserIsAdmin()
+      .then((flag) => {
+        if (!cancelled) {
+          setIsAdminUser(Boolean(flag))
+        }
+      })
+      .catch((roleError) => {
+        if (!cancelled) {
+          setIsAdminUser(false)
+          setError((currentError) => currentError || getErrorMessage(roleError))
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [mode, session])
+
   const refreshDatasets = useCallback(async (): Promise<void> => {
     if (mode !== 'supabase' || !session) {
       setDatasets([])
@@ -815,6 +848,7 @@ function App() {
     setQuery('')
     setActiveView('operacion')
     setRealtimeStatus('LOCAL')
+    setIsAdminUser(nextMode === 'guest')
   }
 
   const handleRequestOtp = async (): Promise<void> => {
@@ -866,6 +900,7 @@ function App() {
     try {
       await signOut()
       setSession(null)
+      setIsAdminUser(false)
       setDatasets([])
       setActiveDatasetId(null)
       setFlights([])
@@ -937,6 +972,10 @@ function App() {
           return
         }
 
+        if (!isAdminUser) {
+          throw new Error('Solo administradores pueden subir CSV en Supabase')
+        }
+
         if (!session?.user.email) {
           throw new Error('Necesitas iniciar sesion OTP antes de subir un CSV')
         }
@@ -967,7 +1006,7 @@ function App() {
         setUploadBusy(false)
       }
     },
-    [mode, refreshDatasets, session?.user.email],
+    [isAdminUser, mode, refreshDatasets, session?.user.email],
   )
 
   useEffect(() => {
@@ -1007,6 +1046,11 @@ function App() {
   }
 
   const handleParametersAction = async (): Promise<void> => {
+    if (mode === 'supabase' && !isAdminUser) {
+      setError('Solo administradores pueden modificar los parametros')
+      return
+    }
+
     if (parametersLocked) {
       setDraftTargets(targets)
       setDraftWorkDate(workDate)
@@ -1058,6 +1102,11 @@ function App() {
   }
 
   const handleOpenAutoAssignModal = (): void => {
+    if (mode === 'supabase' && !isAdminUser) {
+      setError('Solo administradores pueden autoasignar vuelos')
+      return
+    }
+
     if (!selectedWorkDate) {
       setError('Selecciona un dia valido antes de autoasignar')
       return
@@ -1074,6 +1123,12 @@ function App() {
   }
 
   const handleConfirmAutoAssign = async (): Promise<void> => {
+    if (mode === 'supabase' && !isAdminUser) {
+      setError('Solo administradores pueden autoasignar vuelos')
+      setConfirmAutoAssign(false)
+      return
+    }
+
     if (!selectedWorkDate) {
       setError('Dia de trabajo invalido')
       return
@@ -1195,14 +1250,23 @@ function App() {
   }
 
   const showAuthGate = mode === 'supabase' && !session
-  const uploadDisabled = uploadBusy || (mode === 'supabase' && !session)
-  const parametersActionLabel = parametersLocked ? 'Modificar' : targetsBusy ? 'Guardando...' : 'Guardar parametros'
+  const canManageConfig = mode === 'guest' || isAdminUser
+  const uploadDisabled = uploadBusy || (mode === 'supabase' && (!session || !isAdminUser))
+  const parametersActionLabel = !canManageConfig
+    ? 'Solo administradores'
+    : parametersLocked
+      ? 'Modificar'
+      : targetsBusy
+        ? 'Guardando...'
+        : 'Guardar parametros'
+  const parametersActionDisabled = !canManageConfig || targetsBusy || (!parametersLocked && flights.length === 0)
   const autoAssignDisabled =
     autoAssignBusy ||
     !parametersLocked ||
     !selectedWorkDate ||
     dayScopedFlights.length === 0 ||
-    (mode === 'supabase' && !activeDatasetId)
+    (mode === 'supabase' && !activeDatasetId) ||
+    !canManageConfig
   const confirmFlightIsNoAttend = confirmFlight?.serviceFlag === 'NO_ATENDER'
   const confirmFlightIsAttend = confirmFlight?.serviceFlag === 'ATENDER'
 
@@ -1355,7 +1419,7 @@ function App() {
                     <select
                       value={draftWorkDate}
                       onChange={(event) => setDraftWorkDate(event.target.value)}
-                      disabled={parametersLocked || targetsBusy || flights.length === 0}
+                      disabled={parametersLocked || targetsBusy || flights.length === 0 || !canManageConfig}
                     >
                       {availableWorkDays.length === 0 ? (
                         <option value="">Sin dias disponibles</option>
@@ -1371,7 +1435,7 @@ function App() {
                   <button
                     type="button"
                     onClick={() => void handleParametersAction()}
-                    disabled={targetsBusy || (!parametersLocked && flights.length === 0)}
+                    disabled={parametersActionDisabled}
                   >
                     {parametersActionLabel}
                   </button>
@@ -1390,6 +1454,11 @@ function App() {
                   Define porcentajes y dia, guarda parametros y quedaran bloqueados. Para cambiarlos pulsa "Modificar".
                   Usa "Autoasignar" para etiquetar ATENDER/NO ATENDER aleatoriamente para todo el equipo.
                 </p>
+                {mode === 'supabase' && session && !isAdminUser ? (
+                  <p className="banner-hint">
+                    Rol operador: solo administradores pueden cargar CSV o modificar parametros. Sigue marcando vuelos como operados.
+                  </p>
+                ) : null}
 
                 <div className="targets-grid">
                   {categories.map((category) => (
@@ -1403,7 +1472,7 @@ function App() {
                           step={1}
                           value={draftTargets[category] ?? 0}
                           onChange={(event) => handleDraftTargetChange(category, event.target.value)}
-                          disabled={parametersLocked || targetsBusy}
+                          disabled={parametersLocked || targetsBusy || !canManageConfig}
                         />
                         <input
                           type="number"
@@ -1412,7 +1481,7 @@ function App() {
                           step={0.5}
                           value={draftTargets[category] ?? 0}
                           onChange={(event) => handleDraftTargetChange(category, event.target.value)}
-                          disabled={parametersLocked || targetsBusy}
+                          disabled={parametersLocked || targetsBusy || !canManageConfig}
                         />
                       </div>
                     </label>

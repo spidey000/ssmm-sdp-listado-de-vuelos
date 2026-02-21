@@ -13,6 +13,7 @@ $$;
 create table if not exists public.allowed_emails (
   email text primary key,
   active boolean not null default true,
+  is_admin boolean not null default false,
   created_at timestamptz not null default timezone('utc', now()),
   updated_at timestamptz not null default timezone('utc', now()),
   constraint allowed_emails_lowercase check (email = lower(email))
@@ -57,8 +58,25 @@ as $$
   select public.is_email_allowed(public.current_user_email());
 $$;
 
+create or replace function public.current_user_is_admin()
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1
+    from public.allowed_emails ae
+    where ae.email = public.current_user_email()
+      and ae.active = true
+      and ae.is_admin = true
+  );
+$$;
+
 grant execute on function public.is_email_allowed(text) to anon, authenticated;
 grant execute on function public.current_user_is_allowed() to authenticated;
+grant execute on function public.current_user_is_admin() to authenticated;
 
 create table if not exists public.datasets (
   id uuid primary key default gen_random_uuid(),
@@ -294,7 +312,7 @@ declare
   v_work_date date;
   v_work_date_iso text;
 begin
-  if not public.current_user_is_allowed() then
+  if not public.current_user_is_admin() then
     raise exception 'Usuario no autorizado para autoasignacion';
   end if;
 
@@ -424,15 +442,16 @@ create policy datasets_insert_allowed
 on public.datasets
 for insert
 to authenticated
-with check (public.current_user_is_allowed() and created_by = auth.uid());
+using (public.current_user_is_admin())
+with check (public.current_user_is_admin() and created_by = auth.uid());
 
 drop policy if exists datasets_update_allowed on public.datasets;
 create policy datasets_update_allowed
 on public.datasets
 for update
 to authenticated
-using (public.current_user_is_allowed())
-with check (public.current_user_is_allowed());
+using (public.current_user_is_admin())
+with check (public.current_user_is_admin());
 
 drop policy if exists category_targets_select_allowed on public.category_targets;
 create policy category_targets_select_allowed
@@ -446,15 +465,15 @@ create policy category_targets_insert_allowed
 on public.category_targets
 for insert
 to authenticated
-with check (public.current_user_is_allowed());
+with check (public.current_user_is_admin());
 
 drop policy if exists category_targets_update_allowed on public.category_targets;
 create policy category_targets_update_allowed
 on public.category_targets
 for update
 to authenticated
-using (public.current_user_is_allowed())
-with check (public.current_user_is_allowed());
+using (public.current_user_is_admin())
+with check (public.current_user_is_admin());
 
 drop policy if exists dataset_settings_select_allowed on public.dataset_settings;
 create policy dataset_settings_select_allowed
@@ -468,15 +487,15 @@ create policy dataset_settings_insert_allowed
 on public.dataset_settings
 for insert
 to authenticated
-with check (public.current_user_is_allowed());
+with check (public.current_user_is_admin());
 
 drop policy if exists dataset_settings_update_allowed on public.dataset_settings;
 create policy dataset_settings_update_allowed
 on public.dataset_settings
 for update
 to authenticated
-using (public.current_user_is_allowed())
-with check (public.current_user_is_allowed());
+using (public.current_user_is_admin())
+with check (public.current_user_is_admin());
 
 drop policy if exists assignment_runs_select_allowed on public.assignment_runs;
 create policy assignment_runs_select_allowed
@@ -504,7 +523,7 @@ create policy flights_insert_allowed
 on public.flights
 for insert
 to authenticated
-with check (public.current_user_is_allowed());
+with check (public.current_user_is_admin());
 
 drop policy if exists flights_update_allowed on public.flights;
 create policy flights_update_allowed

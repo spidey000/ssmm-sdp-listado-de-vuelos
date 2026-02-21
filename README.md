@@ -18,6 +18,8 @@ Web operativa para control de vuelos protegidos por categoria (5.3, 5.4, 5.5, 5.
 - Marcado de vuelo `Operado` con modal de confirmacion (irreversible).
 - Autoasignacion compartida por equipo (`ATENDER` / `NO ATENDER`) con reparto aleatorio por categoria,
   respetando `ceil(total * porcentaje / 100)` por cada categoria.
+- Roles basados en email: solo administradores pueden subir CSV, ajustar parametros y autoasignar. Todos los
+  usuarios autorizados pueden marcar vuelos como operados.
 - Progreso por categoria en tiempo real: `operados / minimo exigido`.
 - OTP solo para emails admitidos en `public.allowed_emails`.
 
@@ -71,14 +73,16 @@ npm run build
 - `supabase/migrations/20260221_add_auto_assignment.sql`
 - `supabase/migrations/20260221_fix_auto_assignment_day_scope.sql`
 
-4. Inserta los emails autorizados:
+4. Inserta los emails autorizados marcando `is_admin = true` para quienes podran cambiar parametros:
 
 ```sql
-insert into public.allowed_emails (email, active)
+insert into public.allowed_emails (email, active, is_admin)
 values
-  ('operador1@empresa.com', true),
-  ('operador2@empresa.com', true)
-on conflict (email) do update set active = excluded.active;
+  ('operador1@empresa.com', true, true),
+  ('operador2@empresa.com', true, false)
+on conflict (email) do update set
+  active = excluded.active,
+  is_admin = excluded.is_admin;
 ```
 
 5. Activa Email OTP en `Authentication > Providers > Email`.
