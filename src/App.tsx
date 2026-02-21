@@ -24,6 +24,8 @@ import { parseFlightsCsv } from './utils/csv'
 import { buildCategoryProgress, buildInitialTargets } from './utils/progress'
 
 const PAGE_SIZE = 120
+const GUEST_TEST_CSV_URL = '/output_tables/test_flights.csv'
+const GUEST_TEST_CSV_FILE_NAME = 'test_flights.csv'
 
 const CATEGORY_INDEX = new Map<string, number>(CATEGORY_ORDER.map((category, index) => [category, index]))
 
@@ -96,6 +98,16 @@ const hashFile = async (file: File): Promise<string> => {
   return Array.from(new Uint8Array(digest))
     .map((byte) => byte.toString(16).padStart(2, '0'))
     .join('')
+}
+
+const buildGuestSeedCsvFile = async (): Promise<File> => {
+  const response = await fetch(GUEST_TEST_CSV_URL)
+  if (!response.ok) {
+    throw new Error(`No se pudo cargar el CSV de prueba (${response.status})`)
+  }
+
+  const csvBlob = await response.blob()
+  return new File([csvBlob], GUEST_TEST_CSV_FILE_NAME, { type: 'text/csv' })
 }
 
 const parseCsvDateToIso = (input: string): string => {
@@ -903,67 +915,102 @@ function App() {
     setActiveDatasetName(selectedDataset?.name ?? '')
   }
 
-  const handleFileSelected = async (file: File | null): Promise<void> => {
-    if (!file) {
-      return
-    }
-
-    setUploadBusy(true)
-    setError('')
-    setNotice('')
-
-    try {
-      const parsed = await parseFlightsCsv(file)
-      if (parsed.flights.length === 0) {
-        throw new Error('No se han detectado vuelos validos en el CSV')
+  const handleFileSelected = useCallback(
+    async (file: File | null, options?: { autoGuestSeed?: boolean }): Promise<void> => {
+      if (!file) {
+        return
       }
 
-      const initialTargets = mergeTargets(parsed.categories, buildInitialTargets(parsed.categories))
-      const initialWorkDate = inferWorkDate(parsed.flights)
+      setUploadBusy(true)
+      setError('')
+      setNotice('')
 
-      if (mode === 'guest') {
-        setFlights(parsed.flights)
+      try {
+        const parsed = await parseFlightsCsv(file)
+        if (parsed.flights.length === 0) {
+          throw new Error('No se han detectado vuelos validos en el CSV')
+        }
+
+        const initialTargets = mergeTargets(parsed.categories, buildInitialTargets(parsed.categories))
+        const initialWorkDate = inferWorkDate(parsed.flights)
+
+        if (mode === 'guest') {
+          setFlights(parsed.flights)
+          setTargets(initialTargets)
+          setDraftTargets(initialTargets)
+          setWorkDate(initialWorkDate)
+          setDraftWorkDate(initialWorkDate)
+          setParametersLocked(false)
+          setActiveDatasetName(file.name)
+          setActiveDatasetId(null)
+          setNotice(
+            options?.autoGuestSeed
+              ? `Dataset de prueba cargado automaticamente en modo guest: ${parsed.flights.length} vuelos`
+              : `Archivo cargado en modo guest: ${parsed.flights.length} vuelos`,
+          )
+          return
+        }
+
+        if (!session?.user.email) {
+          throw new Error('Necesitas iniciar sesion OTP antes de subir un CSV')
+        }
+
+        const sourceHash = await hashFile(file)
+        const datasetId = await createDataset(file.name, sourceHash)
+        const flightsWithDataset = parsed.flights.map((flight) => ({
+          ...flight,
+          datasetId,
+        }))
+
+        await insertFlights(datasetId, flightsWithDataset)
+
+        setActiveDatasetId(datasetId)
+        setActiveDatasetName(file.name)
+        setFlights(flightsWithDataset)
         setTargets(initialTargets)
         setDraftTargets(initialTargets)
         setWorkDate(initialWorkDate)
         setDraftWorkDate(initialWorkDate)
         setParametersLocked(false)
-        setActiveDatasetName(file.name)
-        setActiveDatasetId(null)
-        setNotice(`Archivo cargado en modo guest: ${parsed.flights.length} vuelos`) 
-        return
+        setNotice(`Dataset subido: ${parsed.flights.length} vuelos. Guarda parametros para bloquear configuracion.`)
+
+        await refreshDatasets()
+      } catch (uploadError) {
+        setError(getErrorMessage(uploadError))
+      } finally {
+        setUploadBusy(false)
       }
+    },
+    [mode, refreshDatasets, session?.user.email],
+  )
 
-      if (!session?.user.email) {
-        throw new Error('Necesitas iniciar sesion OTP antes de subir un CSV')
-      }
-
-      const sourceHash = await hashFile(file)
-      const datasetId = await createDataset(file.name, sourceHash)
-      const flightsWithDataset = parsed.flights.map((flight) => ({
-        ...flight,
-        datasetId,
-      }))
-
-      await insertFlights(datasetId, flightsWithDataset)
-
-      setActiveDatasetId(datasetId)
-      setActiveDatasetName(file.name)
-      setFlights(flightsWithDataset)
-      setTargets(initialTargets)
-      setDraftTargets(initialTargets)
-      setWorkDate(initialWorkDate)
-      setDraftWorkDate(initialWorkDate)
-      setParametersLocked(false)
-      setNotice(`Dataset subido: ${parsed.flights.length} vuelos. Guarda parametros para bloquear configuracion.`)
-
-      await refreshDatasets()
-    } catch (uploadError) {
-      setError(getErrorMessage(uploadError))
-    } finally {
-      setUploadBusy(false)
+  useEffect(() => {
+    if (mode !== 'guest' || flights.length > 0 || activeDatasetName) {
+      return
     }
-  }
+
+    let cancelled = false
+
+    const loadGuestSeedCsv = async (): Promise<void> => {
+      try {
+        const guestSeedFile = await buildGuestSeedCsvFile()
+        if (cancelled) {
+          return
+        }
+        await handleFileSelected(guestSeedFile, { autoGuestSeed: true })
+      } catch (guestSeedError) {
+        if (!cancelled) {
+          setError(getErrorMessage(guestSeedError))
+        }
+      }
+    }
+
+    void loadGuestSeedCsv()
+
+    return () => {
+      cancelled = true
+    }
+  }, [mode, flights.length, activeDatasetName, handleFileSelected])
 
   const handleDraftTargetChange = (category: string, rawValue: string): void => {
     const numericValue = clampPercent(Number(rawValue))
@@ -1198,7 +1245,7 @@ function App() {
         </div>
 
         <div className="status-panel">
-          <span className="status-chip">{mode === 'guest' ? 'Modo local' : realtimeLabel(realtimeStatus)}</span>
+          {mode === 'supabase' ? <span className="status-chip">{realtimeLabel(realtimeStatus)}</span> : null}
           {mode === 'supabase' && session?.user.email ? (
             <>
               <span className="status-chip status-chip--user">{session.user.email}</span>
