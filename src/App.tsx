@@ -1245,7 +1245,9 @@ function App() {
         </div>
 
         <div className="status-panel">
-          {mode === 'supabase' ? <span className="status-chip">{realtimeLabel(realtimeStatus)}</span> : null}
+          {mode === 'supabase' && realtimeStatus !== 'LOCAL' ? (
+            <span className="status-chip">{realtimeLabel(realtimeStatus)}</span>
+          ) : null}
           {mode === 'supabase' && session?.user.email ? (
             <>
               <span className="status-chip status-chip--user">{session.user.email}</span>
