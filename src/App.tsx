@@ -294,14 +294,8 @@ interface CategoryStatsSnapshot {
   operated: number
 }
 
-interface DayStatsSnapshot {
-  dayIso: string
-  dayLabel: string
-  categories: CategoryStatsSnapshot[]
-}
-
 interface StatsExportRow {
-  scope: 'DIA' | 'TOTAL'
+  scope: 'DIA'
   fechaIso: string
   fechaLabel: string
   category: string
@@ -311,6 +305,19 @@ interface StatsExportRow {
   noAttendFlights: number
   untaggedFlights: number
   operatedFlights: number
+}
+
+interface CurrentDayStatsSnapshot {
+  dateIso: string
+  dateLabel: string
+  categories: CategoryStatsSnapshot[]
+  totalFlights: number
+  totalAttend: number
+  totalNoAttend: number
+  totalUntagged: number
+  totalOperated: number
+  exportRows: StatsExportRow[]
+  maxCategoryScale: number
 }
 
 const createEmptyCategoryStats = (category: string): CategoryStatsSnapshot => {
@@ -586,120 +593,69 @@ function App() {
     [dayScopedFlights],
   )
 
-  const statsSnapshot = useMemo(() => {
+  const statsSnapshot = useMemo<CurrentDayStatsSnapshot>(() => {
     const categorySeed =
       categories.length > 0
         ? categories
-        : sortCategories([...new Set(flights.map((flight) => flight.categoriaClasificacion))])
+        : sortCategories([...new Set(dayScopedFlights.map((flight) => flight.categoriaClasificacion))])
 
     const buildCategoryMap = (): Map<string, CategoryStatsSnapshot> => {
       return new Map(categorySeed.map((category) => [category, createEmptyCategoryStats(category)]))
     }
 
-    const totalByCategory = buildCategoryMap()
-    const dayMap = new Map<string, { dayLabel: string; categoryMap: Map<string, CategoryStatsSnapshot> }>()
+    const categoryMap = buildCategoryMap()
 
-    for (const day of availableWorkDays) {
-      dayMap.set(day.iso, {
-        dayLabel: day.label,
-        categoryMap: buildCategoryMap(),
-      })
-    }
-
-    for (const flight of flights) {
-      const dayIso = parseCsvDateToIso(flight.fecha)
-      if (!dayIso) {
-        continue
+    for (const flight of dayScopedFlights) {
+      if (!categoryMap.has(flight.categoriaClasificacion)) {
+        categoryMap.set(flight.categoriaClasificacion, createEmptyCategoryStats(flight.categoriaClasificacion))
       }
 
-      let dayEntry = dayMap.get(dayIso)
-      if (!dayEntry) {
-        dayEntry = {
-          dayLabel: flight.fecha || dayIso,
-          categoryMap: buildCategoryMap(),
-        }
-        dayMap.set(dayIso, dayEntry)
-      }
-
-      if (!dayEntry.categoryMap.has(flight.categoriaClasificacion)) {
-        dayEntry.categoryMap.set(flight.categoriaClasificacion, createEmptyCategoryStats(flight.categoriaClasificacion))
-      }
-      if (!totalByCategory.has(flight.categoriaClasificacion)) {
-        totalByCategory.set(flight.categoriaClasificacion, createEmptyCategoryStats(flight.categoriaClasificacion))
-      }
-
-      const dayCategory = dayEntry.categoryMap.get(flight.categoriaClasificacion)
-      const totalCategory = totalByCategory.get(flight.categoriaClasificacion)
-      if (dayCategory && totalCategory) {
-        applyFlightToCategoryStats(dayCategory, flight)
-        applyFlightToCategoryStats(totalCategory, flight)
+      const targetCategory = categoryMap.get(flight.categoriaClasificacion)
+      if (targetCategory) {
+        applyFlightToCategoryStats(targetCategory, flight)
       }
     }
 
-    const orderedCategories = sortCategories([...new Set([...categorySeed, ...totalByCategory.keys()])])
-
-    const dayStats: DayStatsSnapshot[] = [...dayMap.entries()]
-      .map(([dayIso, dayEntry]) => ({
-        dayIso,
-        dayLabel: dayEntry.dayLabel || dayIso,
-        categories: orderedCategories.map(
-          (category) => dayEntry.categoryMap.get(category) ?? createEmptyCategoryStats(category),
-        ),
-      }))
-      .sort((a, b) => a.dayIso.localeCompare(b.dayIso))
-
-    const totalStats = orderedCategories.map(
-      (category) => totalByCategory.get(category) ?? createEmptyCategoryStats(category),
+    const orderedCategories = sortCategories([...new Set([...categorySeed, ...categoryMap.keys()])])
+    const categoriesStats = orderedCategories.map(
+      (category) => categoryMap.get(category) ?? createEmptyCategoryStats(category),
     )
 
-    const exportRows: StatsExportRow[] = []
+    const totalFlights = categoriesStats.reduce((sum, item) => sum + item.total, 0)
+    const totalAttend = categoriesStats.reduce((sum, item) => sum + item.attend, 0)
+    const totalNoAttend = categoriesStats.reduce((sum, item) => sum + item.noAttend, 0)
+    const totalUntagged = categoriesStats.reduce((sum, item) => sum + item.untagged, 0)
+    const totalOperated = categoriesStats.reduce((sum, item) => sum + item.operated, 0)
 
-    for (const day of dayStats) {
-      for (const categoryStats of day.categories) {
-        exportRows.push({
-          scope: 'DIA',
-          fechaIso: day.dayIso,
-          fechaLabel: day.dayLabel,
-          category: categoryStats.category,
-          totalFlights: categoryStats.total,
-          groundedFlights: categoryStats.noAttend,
-          attendFlights: categoryStats.attend,
-          noAttendFlights: categoryStats.noAttend,
-          untaggedFlights: categoryStats.untagged,
-          operatedFlights: categoryStats.operated,
-        })
-      }
-    }
+    const dateIso = selectedWorkDate || 'SIN_FECHA'
+    const dateLabel = selectedWorkDateLabel
 
-    for (const categoryStats of totalStats) {
-      exportRows.push({
-        scope: 'TOTAL',
-        fechaIso: 'ALL',
-        fechaLabel: 'Todos los dias',
-        category: categoryStats.category,
-        totalFlights: categoryStats.total,
-        groundedFlights: categoryStats.noAttend,
-        attendFlights: categoryStats.attend,
-        noAttendFlights: categoryStats.noAttend,
-        untaggedFlights: categoryStats.untagged,
-        operatedFlights: categoryStats.operated,
-      })
-    }
-
-    const totalFlightsAllDays = totalStats.reduce((sum, item) => sum + item.total, 0)
-    const totalGroundedAllDays = totalStats.reduce((sum, item) => sum + item.noAttend, 0)
-    const totalOperatedAllDays = totalStats.reduce((sum, item) => sum + item.operated, 0)
+    const exportRows: StatsExportRow[] = categoriesStats.filter((categoryStats) => categoryStats.total > 0).map((categoryStats) => ({
+      scope: 'DIA',
+      fechaIso: dateIso,
+      fechaLabel: dateLabel,
+      category: categoryStats.category,
+      totalFlights: categoryStats.total,
+      groundedFlights: categoryStats.noAttend,
+      attendFlights: categoryStats.attend,
+      noAttendFlights: categoryStats.noAttend,
+      untaggedFlights: categoryStats.untagged,
+      operatedFlights: categoryStats.operated,
+    }))
 
     return {
-      dayStats,
-      totalStats,
+      dateIso,
+      dateLabel,
+      categories: categoriesStats,
+      totalFlights,
+      totalAttend,
+      totalNoAttend,
+      totalUntagged,
+      totalOperated,
       exportRows,
-      totalFlightsAllDays,
-      totalGroundedAllDays,
-      totalOperatedAllDays,
-      maxTotalScale: getCategoryScaleMax(totalStats),
+      maxCategoryScale: getCategoryScaleMax(categoriesStats),
     }
-  }, [availableWorkDays, categories, flights])
+  }, [categories, dayScopedFlights, selectedWorkDate, selectedWorkDateLabel])
 
   useEffect(() => {
     if (availableWorkDays.length === 0) {
@@ -1223,8 +1179,9 @@ function App() {
     const link = document.createElement('a')
     const sourceName = activeDatasetName || activeDatasetId || 'stats-vuelos'
     const safeSource = toSafeFileToken(sourceName)
+    const workDayToken = toSafeFileToken(statsSnapshot.dateIso || selectedWorkDate || 'dia')
     const today = new Date().toISOString().slice(0, 10)
-    const fileName = `stats-${safeSource}-${today}.csv`
+    const fileName = `stats-${safeSource}-${workDayToken}-${today}.csv`
 
     link.href = url
     link.download = fileName
@@ -1234,7 +1191,7 @@ function App() {
     URL.revokeObjectURL(url)
 
     setError('')
-    setNotice(`Stats exportadas: ${fileName}`)
+    setNotice(`Stats exportadas para ${statsSnapshot.dateLabel}: ${fileName}`)
   }
 
   const showAuthGate = mode === 'supabase' && !session
@@ -1652,82 +1609,64 @@ function App() {
             <section className="stats-card">
               <div className="stats-toolbar">
                 <div>
-                  <h2>Stats por categoria</h2>
-                  <p>Graficas por dia y acumulado total de vuelos, en tierra y reparto de etiquetas.</p>
+                  <h2>Stats del dia</h2>
+                  <p>Totales y porcentajes para {selectedWorkDateLabel}.</p>
                 </div>
                 <button type="button" className="secondary-btn" onClick={handleExportStatsCsv}>
                   Exportar CSV
                 </button>
               </div>
 
-              <div className="stats-kpis">
-                <article className="stats-kpi">
-                  <span>Total vuelos</span>
-                  <strong>{statsSnapshot.totalFlightsAllDays}</strong>
-                </article>
-                <article className="stats-kpi">
-                  <span>Se quedan en tierra</span>
-                  <strong>{statsSnapshot.totalGroundedAllDays}</strong>
-                  <small>{toPercent(statsSnapshot.totalGroundedAllDays, statsSnapshot.totalFlightsAllDays)}</small>
-                </article>
-                <article className="stats-kpi">
-                  <span>Operados</span>
-                  <strong>{statsSnapshot.totalOperatedAllDays}</strong>
-                  <small>{toPercent(statsSnapshot.totalOperatedAllDays, statsSnapshot.totalFlightsAllDays)}</small>
-                </article>
-              </div>
-
-              <article className="stats-day-card stats-day-card--total">
-                <header className="stats-day-card__header">
-                  <h3>Total de todos los dias</h3>
-                  <small>{statsSnapshot.totalFlightsAllDays} vuelos acumulados</small>
-                </header>
-
-                <div className="stats-chart-grid">
-                  <section className="stats-chart-card">
-                    <h4>Barras: vuelos vs tierra</h4>
-                    <GroupedBarsChart stats={statsSnapshot.totalStats} maxValue={statsSnapshot.maxTotalScale} />
-                  </section>
-
-                  <section className="stats-chart-card">
-                    <h4>Barras stacked por categoria</h4>
-                    <StackedBarsChart stats={statsSnapshot.totalStats} />
-                  </section>
-                </div>
-              </article>
-
-              {statsSnapshot.dayStats.length === 0 ? (
-                <p className="stats-empty">No se detectaron fechas validas para dividir la informacion por dias.</p>
+              {statsSnapshot.totalFlights === 0 ? (
+                <p className="stats-empty">No hay vuelos registrados para {statsSnapshot.dateLabel}.</p>
               ) : (
-                <div className="stats-days-grid">
-                  {statsSnapshot.dayStats.map((day) => {
-                    const dayTotal = day.categories.reduce((sum, item) => sum + item.total, 0)
-                    const dayGrounded = day.categories.reduce((sum, item) => sum + item.noAttend, 0)
+                <>
+                  <div className="stats-kpis">
+                    <article className="stats-kpi">
+                      <span>Total vuelos</span>
+                      <strong>{statsSnapshot.totalFlights}</strong>
+                    </article>
+                    <article className="stats-kpi">
+                      <span>Atender</span>
+                      <strong>{statsSnapshot.totalAttend}</strong>
+                      <small>{toPercent(statsSnapshot.totalAttend, statsSnapshot.totalFlights)}</small>
+                    </article>
+                    <article className="stats-kpi">
+                      <span>No atender</span>
+                      <strong>{statsSnapshot.totalNoAttend}</strong>
+                      <small>{toPercent(statsSnapshot.totalNoAttend, statsSnapshot.totalFlights)}</small>
+                    </article>
+                    <article className="stats-kpi">
+                      <span>Operados</span>
+                      <strong>{statsSnapshot.totalOperated}</strong>
+                      <small>{toPercent(statsSnapshot.totalOperated, statsSnapshot.totalFlights)}</small>
+                    </article>
+                  </div>
 
-                    return (
-                      <article key={day.dayIso} className="stats-day-card">
-                        <header className="stats-day-card__header">
-                          <h3>{day.dayLabel}</h3>
-                          <small>
-                            {dayTotal} vuelos · {dayGrounded} en tierra ({toPercent(dayGrounded, dayTotal)})
-                          </small>
-                        </header>
+                  <article className="stats-day-card stats-day-card--total">
+                    <header className="stats-day-card__header">
+                      <h3>{statsSnapshot.dateLabel}</h3>
+                      <small>
+                        {statsSnapshot.totalFlights} vuelos · {statsSnapshot.totalAttend} ATENDER (
+                        {toPercent(statsSnapshot.totalAttend, statsSnapshot.totalFlights)}) · {statsSnapshot.totalNoAttend} NO
+                        ATENDER ({toPercent(statsSnapshot.totalNoAttend, statsSnapshot.totalFlights)}) ·
+                        {statsSnapshot.totalUntagged} sin etiqueta ({toPercent(statsSnapshot.totalUntagged, statsSnapshot.totalFlights)})
+                      </small>
+                    </header>
 
-                        <div className="stats-chart-grid">
-                          <section className="stats-chart-card">
-                            <h4>Barras por categoria</h4>
-                            <GroupedBarsChart stats={day.categories} maxValue={getCategoryScaleMax(day.categories)} />
-                          </section>
+                    <div className="stats-chart-grid">
+                      <section className="stats-chart-card">
+                        <h4>Barras por categoria</h4>
+                        <GroupedBarsChart stats={statsSnapshot.categories} maxValue={statsSnapshot.maxCategoryScale} />
+                      </section>
 
-                          <section className="stats-chart-card">
-                            <h4>Stacked por categoria</h4>
-                            <StackedBarsChart stats={day.categories} />
-                          </section>
-                        </div>
-                      </article>
-                    )
-                  })}
-                </div>
+                      <section className="stats-chart-card">
+                        <h4>Stacked por categoria</h4>
+                        <StackedBarsChart stats={statsSnapshot.categories} />
+                      </section>
+                    </div>
+                  </article>
+                </>
               )}
             </section>
           )}
