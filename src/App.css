@@ -91,6 +91,31 @@ p {
   border-color: rgba(237, 173, 70, 0.58);
 }
 
+.view-switch {
+  display: inline-flex;
+  gap: 0.3rem;
+  margin-bottom: 0.65rem;
+  padding: 0.2rem;
+  border: 1px solid rgba(116, 161, 172, 0.3);
+  border-radius: 999px;
+  background: rgba(5, 31, 44, 0.66);
+}
+
+.view-switch__btn {
+  border-radius: 999px;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  padding: 0.36rem 0.78rem;
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+
+.view-switch__btn.active {
+  background: rgba(240, 175, 74, 0.94);
+  color: #2d1902;
+}
+
 .warning-banner,
 .message {
   border-radius: 11px;
@@ -387,6 +412,205 @@ button:disabled {
   font-size: 0.72rem;
 }
 
+.stats-card {
+  border: 1px solid var(--panel-border);
+  background: var(--panel-bg);
+  border-radius: 14px;
+  padding: 0.7rem;
+  box-shadow: var(--panel-shadow);
+  display: grid;
+  gap: 0.6rem;
+}
+
+.stats-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.stats-toolbar p {
+  font-size: 0.74rem;
+  color: var(--text-muted);
+  margin-top: 0.2rem;
+}
+
+.stats-kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0.5rem;
+}
+
+.stats-kpi {
+  border: 1px solid rgba(124, 166, 173, 0.3);
+  background: rgba(7, 34, 46, 0.72);
+  border-radius: 11px;
+  padding: 0.55rem 0.6rem;
+  display: grid;
+  gap: 0.2rem;
+}
+
+.stats-kpi span {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+}
+
+.stats-kpi strong {
+  font-size: 1.12rem;
+}
+
+.stats-kpi small {
+  color: #ffd8a5;
+  font-size: 0.72rem;
+}
+
+.stats-days-grid {
+  display: grid;
+  gap: 0.58rem;
+}
+
+.stats-day-card {
+  border: 1px solid rgba(124, 166, 173, 0.28);
+  border-radius: 12px;
+  background: rgba(7, 34, 46, 0.7);
+  padding: 0.56rem;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.stats-day-card--total {
+  border-color: rgba(240, 175, 74, 0.6);
+  box-shadow: inset 0 0 0 1px rgba(240, 175, 74, 0.2);
+}
+
+.stats-day-card__header {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  align-items: baseline;
+}
+
+.stats-day-card__header h3 {
+  font-size: 0.86rem;
+}
+
+.stats-day-card__header small {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+}
+
+.stats-chart-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.58rem;
+}
+
+.stats-chart-card {
+  border: 1px solid rgba(116, 158, 168, 0.22);
+  border-radius: 11px;
+  padding: 0.5rem;
+  background: rgba(4, 25, 36, 0.68);
+  display: grid;
+  gap: 0.42rem;
+}
+
+.stats-chart-card h4 {
+  font-size: 0.76rem;
+}
+
+.stats-bars,
+.stats-stacked {
+  display: grid;
+  gap: 0.42rem;
+}
+
+.stats-bars__row,
+.stats-stacked__row {
+  display: grid;
+  gap: 0.24rem;
+}
+
+.stats-bars__label,
+.stats-stacked__label {
+  font-size: 0.69rem;
+  color: #d4edf5;
+}
+
+.stats-bars__tracks {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.stats-bars__track-label {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.4rem;
+  font-size: 0.67rem;
+  color: var(--text-muted);
+}
+
+.stats-bars__track {
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(16, 28, 37, 0.9);
+  border: 1px solid rgba(91, 133, 143, 0.32);
+  overflow: hidden;
+}
+
+.stats-bar {
+  display: block;
+  height: 100%;
+  min-width: 0;
+}
+
+.stats-bar--total {
+  background: linear-gradient(90deg, #f0ab4a, #f6cf72);
+}
+
+.stats-bar--grounded {
+  background: linear-gradient(90deg, #cd655b, #e88479);
+}
+
+.stats-stacked__bar {
+  width: 100%;
+  display: flex;
+  height: 12px;
+  border-radius: 999px;
+  overflow: hidden;
+  border: 1px solid rgba(91, 133, 143, 0.35);
+  background: rgba(16, 28, 37, 0.9);
+}
+
+.stats-segment {
+  display: block;
+  height: 100%;
+}
+
+.stats-segment--attend {
+  background: #42b678;
+}
+
+.stats-segment--grounded {
+  background: #d76459;
+}
+
+.stats-segment--pending {
+  background: #4f7282;
+}
+
+.stats-stacked__meta {
+  font-size: 0.67rem;
+  color: var(--text-muted);
+}
+
+.stats-empty {
+  border: 1px dashed rgba(112, 149, 158, 0.4);
+  border-radius: 11px;
+  padding: 0.7rem;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
+
 .table-card {
   padding: 0;
   overflow: hidden;
@@ -597,6 +821,16 @@ td small {
   .upload-panel,
   .table-toolbar,
   .toolbar-filters {
+    grid-template-columns: 1fr;
+  }
+
+  .stats-toolbar,
+  .stats-day-card__header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .stats-chart-grid {
     grid-template-columns: 1fr;
   }
 

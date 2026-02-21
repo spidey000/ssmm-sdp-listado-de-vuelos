@@ -241,6 +241,188 @@ const buildGuestAutoAssignment = (
   }
 }
 
+type MainView = 'operacion' | 'stats'
+
+interface CategoryStatsSnapshot {
+  category: string
+  total: number
+  attend: number
+  noAttend: number
+  untagged: number
+  operated: number
+}
+
+interface DayStatsSnapshot {
+  dayIso: string
+  dayLabel: string
+  categories: CategoryStatsSnapshot[]
+}
+
+interface StatsExportRow {
+  scope: 'DIA' | 'TOTAL'
+  fechaIso: string
+  fechaLabel: string
+  category: string
+  totalFlights: number
+  groundedFlights: number
+  attendFlights: number
+  noAttendFlights: number
+  untaggedFlights: number
+  operatedFlights: number
+}
+
+const createEmptyCategoryStats = (category: string): CategoryStatsSnapshot => {
+  return {
+    category,
+    total: 0,
+    attend: 0,
+    noAttend: 0,
+    untagged: 0,
+    operated: 0,
+  }
+}
+
+const applyFlightToCategoryStats = (target: CategoryStatsSnapshot, flight: FlightRecord): void => {
+  target.total += 1
+
+  if (flight.serviceFlag === 'ATENDER') {
+    target.attend += 1
+  } else if (flight.serviceFlag === 'NO_ATENDER') {
+    target.noAttend += 1
+  } else {
+    target.untagged += 1
+  }
+
+  if (flight.operated) {
+    target.operated += 1
+  }
+}
+
+const getCategoryScaleMax = (stats: CategoryStatsSnapshot[]): number => {
+  return Math.max(1, ...stats.map((item) => item.total))
+}
+
+const toPercent = (value: number, total: number): string => {
+  if (total <= 0) {
+    return '0%'
+  }
+  return `${((value / total) * 100).toFixed(1)}%`
+}
+
+const escapeCsvCell = (value: string | number): string => {
+  const raw = String(value)
+  if (raw.includes(',') || raw.includes('"') || raw.includes('\n')) {
+    return `"${raw.replace(/"/g, '""')}"`
+  }
+  return raw
+}
+
+const buildStatsCsv = (rows: StatsExportRow[]): string => {
+  const headers = [
+    'scope',
+    'fecha_iso',
+    'fecha_label',
+    'categoria',
+    'total_vuelos',
+    'en_tierra',
+    'atender',
+    'no_atender',
+    'sin_etiqueta',
+    'operados',
+  ]
+
+  const lines = rows.map((row) => {
+    return [
+      row.scope,
+      row.fechaIso,
+      row.fechaLabel,
+      row.category,
+      row.totalFlights,
+      row.groundedFlights,
+      row.attendFlights,
+      row.noAttendFlights,
+      row.untaggedFlights,
+      row.operatedFlights,
+    ]
+      .map(escapeCsvCell)
+      .join(',')
+  })
+
+  return [headers.join(','), ...lines].join('\r\n')
+}
+
+const toSafeFileToken = (value: string): string => {
+  const normalized = value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .toLowerCase()
+
+  return normalized || 'dataset'
+}
+
+function GroupedBarsChart({ stats, maxValue }: { stats: CategoryStatsSnapshot[]; maxValue: number }) {
+  return (
+    <div className="stats-bars" role="list">
+      {stats.map((item) => {
+        const totalWidth = maxValue <= 0 ? 0 : (item.total / maxValue) * 100
+        const groundedWidth = maxValue <= 0 ? 0 : (item.noAttend / maxValue) * 100
+
+        return (
+          <article key={item.category} className="stats-bars__row" role="listitem">
+            <div className="stats-bars__label">{item.category}</div>
+            <div className="stats-bars__tracks">
+              <div className="stats-bars__track-label">
+                <span>Vuelos</span>
+                <strong>{item.total}</strong>
+              </div>
+              <div className="stats-bars__track">
+                <span className="stats-bar stats-bar--total" style={{ width: `${totalWidth}%` }} />
+              </div>
+
+              <div className="stats-bars__track-label">
+                <span>En tierra</span>
+                <strong>{item.noAttend}</strong>
+              </div>
+              <div className="stats-bars__track">
+                <span className="stats-bar stats-bar--grounded" style={{ width: `${groundedWidth}%` }} />
+              </div>
+            </div>
+          </article>
+        )
+      })}
+    </div>
+  )
+}
+
+function StackedBarsChart({ stats }: { stats: CategoryStatsSnapshot[] }) {
+  return (
+    <div className="stats-stacked" role="list">
+      {stats.map((item) => {
+        const total = item.total
+        const attendWidth = total <= 0 ? 0 : (item.attend / total) * 100
+        const noAttendWidth = total <= 0 ? 0 : (item.noAttend / total) * 100
+        const untaggedWidth = total <= 0 ? 0 : (item.untagged / total) * 100
+
+        return (
+          <article key={item.category} className="stats-stacked__row" role="listitem">
+            <div className="stats-stacked__label">{item.category}</div>
+            <div className="stats-stacked__bar" aria-hidden="true">
+              <span className="stats-segment stats-segment--attend" style={{ width: `${attendWidth}%` }} />
+              <span className="stats-segment stats-segment--grounded" style={{ width: `${noAttendWidth}%` }} />
+              <span className="stats-segment stats-segment--pending" style={{ width: `${untaggedWidth}%` }} />
+            </div>
+            <p className="stats-stacked__meta">
+              A {item.attend} · T {item.noAttend} · S {item.untagged}
+            </p>
+          </article>
+        )
+      })}
+    </div>
+  )
+}
+
 function App() {
   const supabaseConfigured = isSupabaseConfigured()
   const [mode, setMode] = useState<AppMode>(supabaseConfigured ? 'supabase' : 'guest')
@@ -264,6 +446,7 @@ function App() {
   const [parametersLocked, setParametersLocked] = useState(false)
 
   const [targetsOpen, setTargetsOpen] = useState(true)
+  const [activeView, setActiveView] = useState<MainView>('operacion')
   const [query, setQuery] = useState('')
   const [categoryFilter, setCategoryFilter] = useState('all')
   const [serviceFlagFilter, setServiceFlagFilter] = useState<'all' | 'ATENDER' | 'NO_ATENDER'>('all')
@@ -360,6 +543,121 @@ function App() {
     () => dayScopedFlights.filter((flight) => flight.serviceFlag === 'NO_ATENDER').length,
     [dayScopedFlights],
   )
+
+  const statsSnapshot = useMemo(() => {
+    const categorySeed =
+      categories.length > 0
+        ? categories
+        : sortCategories([...new Set(flights.map((flight) => flight.categoriaClasificacion))])
+
+    const buildCategoryMap = (): Map<string, CategoryStatsSnapshot> => {
+      return new Map(categorySeed.map((category) => [category, createEmptyCategoryStats(category)]))
+    }
+
+    const totalByCategory = buildCategoryMap()
+    const dayMap = new Map<string, { dayLabel: string; categoryMap: Map<string, CategoryStatsSnapshot> }>()
+
+    for (const day of availableWorkDays) {
+      dayMap.set(day.iso, {
+        dayLabel: day.label,
+        categoryMap: buildCategoryMap(),
+      })
+    }
+
+    for (const flight of flights) {
+      const dayIso = parseCsvDateToIso(flight.fecha)
+      if (!dayIso) {
+        continue
+      }
+
+      let dayEntry = dayMap.get(dayIso)
+      if (!dayEntry) {
+        dayEntry = {
+          dayLabel: flight.fecha || dayIso,
+          categoryMap: buildCategoryMap(),
+        }
+        dayMap.set(dayIso, dayEntry)
+      }
+
+      if (!dayEntry.categoryMap.has(flight.categoriaClasificacion)) {
+        dayEntry.categoryMap.set(flight.categoriaClasificacion, createEmptyCategoryStats(flight.categoriaClasificacion))
+      }
+      if (!totalByCategory.has(flight.categoriaClasificacion)) {
+        totalByCategory.set(flight.categoriaClasificacion, createEmptyCategoryStats(flight.categoriaClasificacion))
+      }
+
+      const dayCategory = dayEntry.categoryMap.get(flight.categoriaClasificacion)
+      const totalCategory = totalByCategory.get(flight.categoriaClasificacion)
+      if (dayCategory && totalCategory) {
+        applyFlightToCategoryStats(dayCategory, flight)
+        applyFlightToCategoryStats(totalCategory, flight)
+      }
+    }
+
+    const orderedCategories = sortCategories([...new Set([...categorySeed, ...totalByCategory.keys()])])
+
+    const dayStats: DayStatsSnapshot[] = [...dayMap.entries()]
+      .map(([dayIso, dayEntry]) => ({
+        dayIso,
+        dayLabel: dayEntry.dayLabel || dayIso,
+        categories: orderedCategories.map(
+          (category) => dayEntry.categoryMap.get(category) ?? createEmptyCategoryStats(category),
+        ),
+      }))
+      .sort((a, b) => a.dayIso.localeCompare(b.dayIso))
+
+    const totalStats = orderedCategories.map(
+      (category) => totalByCategory.get(category) ?? createEmptyCategoryStats(category),
+    )
+
+    const exportRows: StatsExportRow[] = []
+
+    for (const day of dayStats) {
+      for (const categoryStats of day.categories) {
+        exportRows.push({
+          scope: 'DIA',
+          fechaIso: day.dayIso,
+          fechaLabel: day.dayLabel,
+          category: categoryStats.category,
+          totalFlights: categoryStats.total,
+          groundedFlights: categoryStats.noAttend,
+          attendFlights: categoryStats.attend,
+          noAttendFlights: categoryStats.noAttend,
+          untaggedFlights: categoryStats.untagged,
+          operatedFlights: categoryStats.operated,
+        })
+      }
+    }
+
+    for (const categoryStats of totalStats) {
+      exportRows.push({
+        scope: 'TOTAL',
+        fechaIso: 'ALL',
+        fechaLabel: 'Todos los dias',
+        category: categoryStats.category,
+        totalFlights: categoryStats.total,
+        groundedFlights: categoryStats.noAttend,
+        attendFlights: categoryStats.attend,
+        noAttendFlights: categoryStats.noAttend,
+        untaggedFlights: categoryStats.untagged,
+        operatedFlights: categoryStats.operated,
+      })
+    }
+
+    const totalFlightsAllDays = totalStats.reduce((sum, item) => sum + item.total, 0)
+    const totalGroundedAllDays = totalStats.reduce((sum, item) => sum + item.noAttend, 0)
+    const totalOperatedAllDays = totalStats.reduce((sum, item) => sum + item.operated, 0)
+
+    return {
+      dayStats,
+      totalStats,
+      exportRows,
+      totalFlightsAllDays,
+      totalGroundedAllDays,
+      totalOperatedAllDays,
+      maxTotalScale: getCategoryScaleMax(totalStats),
+    }
+  }, [availableWorkDays, categories, flights])
 
   useEffect(() => {
     if (availableWorkDays.length === 0) {
@@ -517,6 +815,7 @@ function App() {
     setCategoryFilter('all')
     setServiceFlagFilter('all')
     setQuery('')
+    setActiveView('operacion')
     setRealtimeStatus('LOCAL')
   }
 
@@ -577,6 +876,7 @@ function App() {
       setWorkDate('')
       setDraftWorkDate('')
       setParametersLocked(false)
+      setActiveView('operacion')
       setServiceFlagFilter('all')
     } catch (signOutError) {
       setError(getErrorMessage(signOutError))
@@ -593,6 +893,7 @@ function App() {
       setWorkDate('')
       setDraftWorkDate('')
       setParametersLocked(false)
+      setActiveView('operacion')
       setServiceFlagFilter('all')
       return
     }
@@ -832,6 +1133,32 @@ function App() {
     }
   }
 
+  const handleExportStatsCsv = (): void => {
+    if (statsSnapshot.exportRows.length === 0) {
+      setError('No hay datos para exportar en CSV')
+      return
+    }
+
+    const csvContent = buildStatsCsv(statsSnapshot.exportRows)
+    const blob = new Blob([`\uFEFF${csvContent}`], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    const sourceName = activeDatasetName || activeDatasetId || 'stats-vuelos'
+    const safeSource = toSafeFileToken(sourceName)
+    const today = new Date().toISOString().slice(0, 10)
+    const fileName = `stats-${safeSource}-${today}.csv`
+
+    link.href = url
+    link.download = fileName
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
+
+    setError('')
+    setNotice(`Stats exportadas: ${fileName}`)
+  }
+
   const showAuthGate = mode === 'supabase' && !session
   const uploadDisabled = uploadBusy || (mode === 'supabase' && !session)
   const parametersActionLabel = parametersLocked ? 'Modificar' : targetsBusy ? 'Guardando...' : 'Guardar parametros'
@@ -1058,12 +1385,30 @@ function App() {
             ) : null}
           </section>
 
+          <section className="view-switch" role="tablist" aria-label="Vista principal">
+            <button
+              type="button"
+              className={activeView === 'operacion' ? 'view-switch__btn active' : 'view-switch__btn'}
+              onClick={() => setActiveView('operacion')}
+            >
+              Operacion
+            </button>
+            <button
+              type="button"
+              className={activeView === 'stats' ? 'view-switch__btn active' : 'view-switch__btn'}
+              onClick={() => setActiveView('stats')}
+              disabled={flights.length === 0}
+            >
+              Stats
+            </button>
+          </section>
+
           {flights.length === 0 ? (
             <section className="empty-state">
               <h2>Sube un CSV para empezar</h2>
               <p>Los parametros y la carga de archivo estan en el banner superior.</p>
             </section>
-          ) : (
+          ) : activeView === 'operacion' ? (
             <>
               <section className="progress-grid">
                 {progress.map((item) => {
@@ -1223,6 +1568,88 @@ function App() {
                 </div>
               </section>
             </>
+          ) : (
+            <section className="stats-card">
+              <div className="stats-toolbar">
+                <div>
+                  <h2>Stats por categoria</h2>
+                  <p>Graficas por dia y acumulado total de vuelos, en tierra y reparto de etiquetas.</p>
+                </div>
+                <button type="button" className="secondary-btn" onClick={handleExportStatsCsv}>
+                  Exportar CSV
+                </button>
+              </div>
+
+              <div className="stats-kpis">
+                <article className="stats-kpi">
+                  <span>Total vuelos</span>
+                  <strong>{statsSnapshot.totalFlightsAllDays}</strong>
+                </article>
+                <article className="stats-kpi">
+                  <span>Se quedan en tierra</span>
+                  <strong>{statsSnapshot.totalGroundedAllDays}</strong>
+                  <small>{toPercent(statsSnapshot.totalGroundedAllDays, statsSnapshot.totalFlightsAllDays)}</small>
+                </article>
+                <article className="stats-kpi">
+                  <span>Operados</span>
+                  <strong>{statsSnapshot.totalOperatedAllDays}</strong>
+                  <small>{toPercent(statsSnapshot.totalOperatedAllDays, statsSnapshot.totalFlightsAllDays)}</small>
+                </article>
+              </div>
+
+              <article className="stats-day-card stats-day-card--total">
+                <header className="stats-day-card__header">
+                  <h3>Total de todos los dias</h3>
+                  <small>{statsSnapshot.totalFlightsAllDays} vuelos acumulados</small>
+                </header>
+
+                <div className="stats-chart-grid">
+                  <section className="stats-chart-card">
+                    <h4>Barras: vuelos vs tierra</h4>
+                    <GroupedBarsChart stats={statsSnapshot.totalStats} maxValue={statsSnapshot.maxTotalScale} />
+                  </section>
+
+                  <section className="stats-chart-card">
+                    <h4>Barras stacked por categoria</h4>
+                    <StackedBarsChart stats={statsSnapshot.totalStats} />
+                  </section>
+                </div>
+              </article>
+
+              {statsSnapshot.dayStats.length === 0 ? (
+                <p className="stats-empty">No se detectaron fechas validas para dividir la informacion por dias.</p>
+              ) : (
+                <div className="stats-days-grid">
+                  {statsSnapshot.dayStats.map((day) => {
+                    const dayTotal = day.categories.reduce((sum, item) => sum + item.total, 0)
+                    const dayGrounded = day.categories.reduce((sum, item) => sum + item.noAttend, 0)
+
+                    return (
+                      <article key={day.dayIso} className="stats-day-card">
+                        <header className="stats-day-card__header">
+                          <h3>{day.dayLabel}</h3>
+                          <small>
+                            {dayTotal} vuelos · {dayGrounded} en tierra ({toPercent(dayGrounded, dayTotal)})
+                          </small>
+                        </header>
+
+                        <div className="stats-chart-grid">
+                          <section className="stats-chart-card">
+                            <h4>Barras por categoria</h4>
+                            <GroupedBarsChart stats={day.categories} maxValue={getCategoryScaleMax(day.categories)} />
+                          </section>
+
+                          <section className="stats-chart-card">
+                            <h4>Stacked por categoria</h4>
+                            <StackedBarsChart stats={day.categories} />
+                          </section>
+                        </div>
+                      </article>
+                    )
+                  })}
+                </div>
+              )}
+            </section>
           )}
         </>
       )}
