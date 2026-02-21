@@ -1,0 +1,24 @@
+export const CATEGORY_ORDER = [
+  '5.3 DOMESTICO NO PENINSULAR',
+  '5.4 INTERNACIONAL / PENINSULAR >5H',
+  '5.5 DOMESTICO PENINSULAR <=5H',
+  '5.6 OTROS VUELOS',
+] as const
+
+export const DEFAULT_TARGETS: Record<string, number> = {
+  '5.3 DOMESTICO NO PENINSULAR': 74,
+  '5.4 INTERNACIONAL / PENINSULAR >5H': 54,
+  '5.5 DOMESTICO PENINSULAR <=5H': 31,
+  '5.6 OTROS VUELOS': 100,
+}
+
+export const REQUIRED_FIELDS = [
+  'CATEGORIA_CLASIFICACION',
+  'tipo',
+  'FECHA',
+  'HORA',
+  'CÍA',
+  'DSCIA',
+  'CDOCIA',
+  'VUELO',
+] as const
