@@ -13,6 +13,7 @@ import {
   onAuthChange,
   requestOtp,
   saveCategoryTargets,
+  saveDatasetSettings,
   signOut,
   subscribeRealtime,
   verifyOtp,
@@ -96,6 +97,29 @@ const hashFile = async (file: File): Promise<string> => {
     .join('')
 }
 
+const parseCsvDateToIso = (input: string): string => {
+  const parts = input.trim().split('/')
+  if (parts.length !== 3) {
+    return ''
+  }
+
+  const day = parts[0]
+  const month = parts[1]
+  const year = parts[2]
+  if (!day || !month || !year) {
+    return ''
+  }
+
+  return `${year.padStart(4, '0')}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`
+}
+
+const inferWorkDate = (flights: FlightRecord[]): string => {
+  if (flights.length === 0) {
+    return ''
+  }
+  return parseCsvDateToIso(flights[0].fecha)
+}
+
 const buildOperatedUpdate = (flight: FlightRecord, operatorEmail: string): FlightRecord => {
   return {
     ...flight,
@@ -123,7 +147,10 @@ function App() {
   const [targets, setTargets] = useState<Record<string, number>>({ ...DEFAULT_TARGETS })
   const [draftTargets, setDraftTargets] = useState<Record<string, number>>({ ...DEFAULT_TARGETS })
 
-  const [uploaderCollapsed, setUploaderCollapsed] = useState(false)
+  const [workDate, setWorkDate] = useState('')
+  const [draftWorkDate, setDraftWorkDate] = useState('')
+  const [parametersLocked, setParametersLocked] = useState(false)
+
   const [targetsOpen, setTargetsOpen] = useState(true)
   const [query, setQuery] = useState('')
   const [categoryFilter, setCategoryFilter] = useState('all')
@@ -146,9 +173,11 @@ function App() {
     return sortCategories(merged)
   }, [flights, draftTargets])
 
+  const progressTargets = parametersLocked ? targets : draftTargets
+
   const progress = useMemo<CategoryProgress[]>(() => {
-    return buildCategoryProgress(flights, targets)
-  }, [flights, targets])
+    return buildCategoryProgress(flights, progressTargets)
+  }, [flights, progressTargets])
 
   const filteredFlights = useMemo(() => {
     const normalizedQuery = query.trim().toUpperCase()
@@ -159,7 +188,15 @@ function App() {
       if (!normalizedQuery) {
         return true
       }
-      const searchable = [flight.vuelo, flight.dscia, flight.cia, flight.cdocia, flight.fecha, flight.hora]
+      const searchable = [
+        flight.vuelo,
+        flight.dscia,
+        flight.cia,
+        flight.cdocia,
+        flight.fecha,
+        flight.hora,
+        flight.categoriaClasificacion,
+      ]
         .join(' ')
         .toUpperCase()
       return searchable.includes(normalizedQuery)
@@ -243,14 +280,18 @@ function App() {
         if (!active) {
           return
         }
+
         setFlights(datasetState.flights)
         const mergedTargets = mergeTargets(
           datasetState.flights.map((flight) => flight.categoriaClasificacion),
           datasetState.targets,
         )
+        const resolvedWorkDate = datasetState.workDate ?? inferWorkDate(datasetState.flights)
         setTargets(mergedTargets)
         setDraftTargets(mergedTargets)
-        setUploaderCollapsed(true)
+        setWorkDate(resolvedWorkDate)
+        setDraftWorkDate(resolvedWorkDate)
+        setParametersLocked(datasetState.hasSavedConfig)
       })
       .catch((loadError) => {
         if (active) {
@@ -279,10 +320,15 @@ function App() {
       (updatedTargets) => {
         setTargets((currentTargets) => {
           const nextRawTargets = { ...currentTargets, ...updatedTargets }
-          const mergedTargets = mergeTargets(Object.keys(nextRawTargets), nextRawTargets)
-          setDraftTargets(mergedTargets)
-          return mergedTargets
+          const merged = mergeTargets(Object.keys(nextRawTargets), nextRawTargets)
+          setDraftTargets(merged)
+          return merged
         })
+      },
+      (nextWorkDate) => {
+        setWorkDate(nextWorkDate)
+        setDraftWorkDate(nextWorkDate)
+        setParametersLocked(true)
       },
       (status) => {
         setRealtimeStatus(status)
@@ -300,9 +346,11 @@ function App() {
     setFlights([])
     setTargets({ ...DEFAULT_TARGETS })
     setDraftTargets({ ...DEFAULT_TARGETS })
+    setWorkDate('')
+    setDraftWorkDate('')
+    setParametersLocked(false)
     setActiveDatasetId(null)
     setActiveDatasetName('')
-    setUploaderCollapsed(false)
     setNotice('')
     setError('')
     setCategoryFilter('all')
@@ -355,20 +403,37 @@ function App() {
   const handleSupabaseSignOut = async (): Promise<void> => {
     setError('')
     setNotice('')
+
     try {
       await signOut()
       setSession(null)
       setDatasets([])
       setActiveDatasetId(null)
       setFlights([])
-      setUploaderCollapsed(false)
+      setTargets({ ...DEFAULT_TARGETS })
+      setDraftTargets({ ...DEFAULT_TARGETS })
+      setWorkDate('')
+      setDraftWorkDate('')
+      setParametersLocked(false)
     } catch (signOutError) {
       setError(getErrorMessage(signOutError))
     }
   }
 
   const handleDatasetSelect = (datasetId: string): void => {
-    setActiveDatasetId(datasetId || null)
+    if (!datasetId) {
+      setActiveDatasetId(null)
+      setActiveDatasetName('')
+      setFlights([])
+      setTargets({ ...DEFAULT_TARGETS })
+      setDraftTargets({ ...DEFAULT_TARGETS })
+      setWorkDate('')
+      setDraftWorkDate('')
+      setParametersLocked(false)
+      return
+    }
+
+    setActiveDatasetId(datasetId)
     const selectedDataset = datasets.find((dataset) => dataset.id === datasetId)
     setActiveDatasetName(selectedDataset?.name ?? '')
   }
@@ -389,14 +454,17 @@ function App() {
       }
 
       const initialTargets = mergeTargets(parsed.categories, buildInitialTargets(parsed.categories))
+      const initialWorkDate = inferWorkDate(parsed.flights)
 
       if (mode === 'guest') {
         setFlights(parsed.flights)
         setTargets(initialTargets)
         setDraftTargets(initialTargets)
+        setWorkDate(initialWorkDate)
+        setDraftWorkDate(initialWorkDate)
+        setParametersLocked(false)
         setActiveDatasetName(file.name)
         setActiveDatasetId(null)
-        setUploaderCollapsed(true)
         setNotice(`Archivo cargado en modo guest: ${parsed.flights.length} vuelos`) 
         return
       }
@@ -412,7 +480,6 @@ function App() {
         datasetId,
       }))
 
-      await saveCategoryTargets(datasetId, initialTargets)
       await insertFlights(datasetId, flightsWithDataset)
 
       setActiveDatasetId(datasetId)
@@ -420,8 +487,10 @@ function App() {
       setFlights(flightsWithDataset)
       setTargets(initialTargets)
       setDraftTargets(initialTargets)
-      setUploaderCollapsed(true)
-      setNotice(`Dataset subido y sincronizado: ${parsed.flights.length} vuelos`) 
+      setWorkDate(initialWorkDate)
+      setDraftWorkDate(initialWorkDate)
+      setParametersLocked(false)
+      setNotice(`Dataset subido: ${parsed.flights.length} vuelos. Guarda parametros para bloquear configuracion.`)
 
       await refreshDatasets()
     } catch (uploadError) {
@@ -439,7 +508,25 @@ function App() {
     }))
   }
 
-  const handleApplyTargets = async (): Promise<void> => {
+  const handleParametersAction = async (): Promise<void> => {
+    if (parametersLocked) {
+      setDraftTargets(targets)
+      setDraftWorkDate(workDate)
+      setParametersLocked(false)
+      setNotice('Modo modificacion activado. Ajusta parametros y vuelve a guardar.')
+      return
+    }
+
+    if (flights.length === 0) {
+      setError('Carga un CSV antes de guardar parametros')
+      return
+    }
+
+    if (!draftWorkDate) {
+      setError('Selecciona el dia de trabajo antes de guardar')
+      return
+    }
+
     const seedCategories = categories.length > 0 ? categories : [...CATEGORY_ORDER]
     const nextTargets = mergeTargets(seedCategories, draftTargets)
 
@@ -447,12 +534,24 @@ function App() {
     setError('')
 
     try {
-      if (mode === 'supabase' && activeDatasetId) {
-        await saveCategoryTargets(activeDatasetId, nextTargets)
-        setNotice('Porcentajes actualizados para todo el equipo')
+      if (mode === 'supabase') {
+        if (!activeDatasetId) {
+          throw new Error('Selecciona o carga un dataset antes de guardar parametros')
+        }
+
+        await Promise.all([
+          saveCategoryTargets(activeDatasetId, nextTargets),
+          saveDatasetSettings(activeDatasetId, draftWorkDate),
+        ])
+        setNotice('Parametros guardados y bloqueados para el equipo')
+      } else {
+        setNotice('Parametros guardados en modo guest (solo local)')
       }
+
       setTargets(nextTargets)
       setDraftTargets(nextTargets)
+      setWorkDate(draftWorkDate)
+      setParametersLocked(true)
     } catch (targetsError) {
       setError(getErrorMessage(targetsError))
     } finally {
@@ -495,11 +594,6 @@ function App() {
       const updatedFlight = await markFlightOperated(confirmFlight.id, session.user.email)
       if (!updatedFlight) {
         setNotice(`El vuelo ${confirmFlight.vuelo} ya fue marcado por otro operador`) 
-        setFlights((currentFlights) =>
-          currentFlights.map((flight) =>
-            flight.id === confirmFlight.id ? buildOperatedUpdate(flight, 'otro-operador') : flight,
-          ),
-        )
       } else {
         setFlights((currentFlights) =>
           currentFlights.map((flight) => (flight.id === updatedFlight.id ? updatedFlight : flight)),
@@ -517,6 +611,7 @@ function App() {
 
   const showAuthGate = mode === 'supabase' && !session
   const uploadDisabled = uploadBusy || (mode === 'supabase' && !session)
+  const parametersActionLabel = parametersLocked ? 'Modificar' : targetsBusy ? 'Guardando...' : 'Guardar parametros'
 
   return (
     <div className="app-shell">
@@ -580,7 +675,7 @@ function App() {
               placeholder="operador@empresa.com"
             />
           </div>
-          <button type="button" onClick={handleRequestOtp} disabled={authBusy}>
+          <button type="button" onClick={() => void handleRequestOtp()} disabled={authBusy}>
             {authBusy ? 'Enviando...' : 'Enviar OTP'}
           </button>
 
@@ -597,7 +692,7 @@ function App() {
                   placeholder="123456"
                 />
               </div>
-              <button type="button" className="secondary-btn" onClick={handleVerifyOtp} disabled={authBusy}>
+              <button type="button" className="secondary-btn" onClick={() => void handleVerifyOtp()} disabled={authBusy}>
                 {authBusy ? 'Verificando...' : 'Validar OTP'}
               </button>
             </>
@@ -606,109 +701,124 @@ function App() {
       ) : (
         <>
           <section className="banner-card">
-            <button type="button" className="banner-card__toggle" onClick={() => setTargetsOpen((open) => !open)}>
-              Porcentajes de proteccion por categoria {targetsOpen ? '▲' : '▼'}
-            </button>
+            <div className="banner-card__header">
+              <button type="button" className="banner-card__toggle" onClick={() => setTargetsOpen((open) => !open)}>
+                {targetsOpen ? 'Ocultar parametros ▲' : 'Mostrar parametros ▼'}
+              </button>
+              <div className="banner-summary">
+                <span>CSV: {activeDatasetName || 'Sin archivo cargado'}</span>
+                <span>Dia activo: {workDate || '--'}</span>
+                <span>{parametersLocked ? 'Configuracion bloqueada' : 'Configuracion editable'}</span>
+              </div>
+            </div>
+
             {targetsOpen ? (
-              <div className="targets-grid">
-                {categories.map((category) => (
-                  <label key={category} className="target-control">
-                    <span>{category}</span>
-                    <div className="target-control__inputs">
+              <div className="banner-card__body">
+                {mode === 'supabase' ? (
+                  <div className="banner-inline-grid">
+                    <label>
+                      Dataset activo
+                      <select
+                        value={activeDatasetId ?? ''}
+                        onChange={(event) => handleDatasetSelect(event.target.value)}
+                      >
+                        <option value="">Selecciona un dataset</option>
+                        {datasets.map((dataset) => (
+                          <option key={dataset.id} value={dataset.id}>
+                            {dataset.name} ({formatDatasetDate(dataset.createdAt)})
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <button type="button" className="secondary-btn" onClick={() => void refreshDatasets()}>
+                      Recargar lista
+                    </button>
+                  </div>
+                ) : null}
+
+                <div className={flights.length === 0 ? 'upload-panel upload-panel--primary' : 'upload-panel'}>
+                  <label className="upload-panel__file">
+                    CSV activo
+                    <div className="file-input">
                       <input
-                        type="range"
-                        min={0}
-                        max={100}
-                        step={1}
-                        value={draftTargets[category] ?? 0}
-                        onChange={(event) => handleDraftTargetChange(category, event.target.value)}
+                        type="file"
+                        accept=".csv,text/csv"
+                        disabled={uploadDisabled}
+                        onChange={(event) => {
+                          const selectedFile = event.target.files?.[0] ?? null
+                          void handleFileSelected(selectedFile)
+                          event.currentTarget.value = ''
+                        }}
                       />
-                      <input
-                        type="number"
-                        min={0}
-                        max={100}
-                        step={0.5}
-                        value={draftTargets[category] ?? 0}
-                        onChange={(event) => handleDraftTargetChange(category, event.target.value)}
-                      />
+                      <span>{uploadBusy ? 'Procesando...' : flights.length === 0 ? 'Seleccionar CSV' : 'Cambiar CSV'}</span>
                     </div>
                   </label>
-                ))}
-                <button type="button" onClick={handleApplyTargets} disabled={targetsBusy}>
-                  {targetsBusy ? 'Guardando...' : 'Aplicar porcentajes'}
-                </button>
+
+                  <label>
+                    Dia de trabajo
+                    <input
+                      type="date"
+                      value={draftWorkDate}
+                      onChange={(event) => setDraftWorkDate(event.target.value)}
+                      disabled={parametersLocked || targetsBusy || flights.length === 0}
+                    />
+                  </label>
+
+                  <button
+                    type="button"
+                    onClick={() => void handleParametersAction()}
+                    disabled={targetsBusy || (!parametersLocked && flights.length === 0)}
+                  >
+                    {parametersActionLabel}
+                  </button>
+                </div>
+
+                <p className="banner-hint">
+                  Define porcentajes y dia, guarda parametros y quedaran bloqueados. Para cambiarlos pulsa "Modificar".
+                </p>
+
+                <div className="targets-grid">
+                  {categories.map((category) => (
+                    <label key={category} className="target-control">
+                      <span>{category}</span>
+                      <div className="target-control__inputs">
+                        <input
+                          type="range"
+                          min={0}
+                          max={100}
+                          step={1}
+                          value={draftTargets[category] ?? 0}
+                          onChange={(event) => handleDraftTargetChange(category, event.target.value)}
+                          disabled={parametersLocked || targetsBusy}
+                        />
+                        <input
+                          type="number"
+                          min={0}
+                          max={100}
+                          step={0.5}
+                          value={draftTargets[category] ?? 0}
+                          onChange={(event) => handleDraftTargetChange(category, event.target.value)}
+                          disabled={parametersLocked || targetsBusy}
+                        />
+                      </div>
+                    </label>
+                  ))}
+                </div>
               </div>
             ) : null}
           </section>
 
-          {mode === 'supabase' ? (
-            <section className="datasets-panel">
-              <div>
-                <label htmlFor="datasetSelect">Dataset activo</label>
-                <select
-                  id="datasetSelect"
-                  value={activeDatasetId ?? ''}
-                  onChange={(event) => handleDatasetSelect(event.target.value)}
-                >
-                  <option value="">Selecciona un dataset</option>
-                  {datasets.map((dataset) => (
-                    <option key={dataset.id} value={dataset.id}>
-                      {dataset.name} ({formatDatasetDate(dataset.createdAt)})
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <button type="button" className="secondary-btn" onClick={() => void refreshDatasets()}>
-                Recargar lista
-              </button>
-            </section>
-          ) : null}
-
           {flights.length === 0 ? (
-            <section className="upload-stage upload-stage--primary">
-              <h2>Cargar listado CSV</h2>
-              <p>
-                Campos minimos esperados: CATEGORIA_CLASIFICACION, tipo, FECHA, HORA, CÍA, DSCIA, CDOCIA, VUELO.
-              </p>
-              <label className="file-input">
-                <input
-                  type="file"
-                  accept=".csv,text/csv"
-                  disabled={uploadDisabled}
-                  onChange={(event) => {
-                    const selectedFile = event.target.files?.[0] ?? null
-                    void handleFileSelected(selectedFile)
-                    event.currentTarget.value = ''
-                  }}
-                />
-                <span>{uploadBusy ? 'Procesando...' : 'Seleccionar CSV'}</span>
-              </label>
+            <section className="empty-state">
+              <h2>Sube un CSV para empezar</h2>
+              <p>Los parametros y la carga de archivo estan en el banner superior.</p>
             </section>
           ) : (
             <>
-              {uploaderCollapsed ? (
-                <aside className="mini-uploader">
-                  <h3>CSV activo</h3>
-                  <p title={activeDatasetName}>{activeDatasetName || 'Dataset cargado'}</p>
-                  <label className="file-input file-input--compact">
-                    <input
-                      type="file"
-                      accept=".csv,text/csv"
-                      disabled={uploadDisabled}
-                      onChange={(event) => {
-                        const selectedFile = event.target.files?.[0] ?? null
-                        void handleFileSelected(selectedFile)
-                        event.currentTarget.value = ''
-                      }}
-                    />
-                    <span>{uploadBusy ? 'Subiendo...' : 'Cambiar archivo'}</span>
-                  </label>
-                </aside>
-              ) : null}
-
               <section className="progress-grid">
                 {progress.map((item) => {
-                  const ratio = item.total === 0 ? 0 : (item.operated / item.minimumRequired) * 100
+                  const ratio = item.minimumRequired === 0 ? 0 : (item.operated / item.minimumRequired) * 100
                   const progressPercent = Math.max(0, Math.min(100, Number.isFinite(ratio) ? ratio : 0))
                   return (
                     <article

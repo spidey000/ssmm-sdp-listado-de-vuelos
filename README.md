@@ -9,10 +9,13 @@ Web operativa para control de vuelos protegidos por categoria (5.3, 5.4, 5.5, 5.
 
 - Carga CSV con validacion de campos minimos:
   - `CATEGORIA_CLASIFICACION`, `tipo`, `FECHA`, `HORA`, `CÍA`, `DSCIA`, `CDOCIA`, `VUELO`
-- Configuracion de porcentaje objetivo por categoria.
+- Banner compacto (siempre disponible) con todos los parametros:
+  - CSV activo
+  - dia de trabajo
+  - porcentajes por categoria
+- Configuracion bloqueable: al guardar, sliders y fecha quedan desactivados y el boton pasa a `Modificar`.
 - Marcado de vuelo `Operado` con modal de confirmacion (irreversible).
 - Progreso por categoria en tiempo real: `operados / minimo exigido`.
-- Uploader protagonista al inicio y mini-uploader flotante tras cargar archivo.
 - OTP solo para emails admitidos en `public.allowed_emails`.
 
 ## Puesta en marcha
@@ -41,7 +44,11 @@ npm run build
 
 1. Abre SQL Editor en tu proyecto Supabase.
 2. Ejecuta `supabase/schema.sql`.
-3. Inserta los emails autorizados:
+3. Si el proyecto ya estaba creado antes de `dataset_settings`, pega y ejecuta tambien el SQL de:
+
+- `supabase/migrations/20260221_add_dataset_settings.sql`
+
+4. Inserta los emails autorizados:
 
 ```sql
 insert into public.allowed_emails (email, active)
@@ -51,7 +58,24 @@ values
 on conflict (email) do update set active = excluded.active;
 ```
 
-4. Activa Email OTP en `Authentication > Providers > Email`.
+5. Activa Email OTP en `Authentication > Providers > Email`.
+
+## Deploy en Netlify
+
+Variables de entorno necesarias en Netlify:
+
+- `VITE_SUPABASE_URL`
+- `VITE_SUPABASE_ANON_KEY`
+
+No pongas en frontend:
+
+- `SUPABASE_SECRET_KEY`
+- `GITHUB_PAT`
+
+Configura en Supabase `Authentication > URL Configuration`:
+
+- `Site URL`: URL publica de Netlify
+- `Redirect URLs`: URL publica de Netlify (y previews si aplican)
 
 ## Nota de seguridad
 

@@ -29,6 +29,10 @@ interface CategoryTargetRow {
   target_percent: number
 }
 
+interface DatasetSettingsRow {
+  work_date: string
+}
+
 type RealtimeStatus = 'SUBSCRIBED' | 'CLOSED' | 'CHANNEL_ERROR' | 'TIMED_OUT'
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL?.trim() ?? ''
@@ -54,6 +58,23 @@ const mapFlightRow = (row: FlightRow): FlightRecord => ({
 })
 
 const normalizeEmail = (email: string): string => email.trim().toLowerCase()
+
+const isMissingTableError = (error: unknown): boolean => {
+  if (!error || typeof error !== 'object') {
+    return false
+  }
+
+  const err = error as { code?: string; message?: string }
+  if (err.code === 'PGRST205' || err.code === '42P01') {
+    return true
+  }
+
+  if (typeof err.message === 'string' && err.message.toLowerCase().includes('dataset_settings')) {
+    return true
+  }
+
+  return false
+}
 
 export function isSupabaseConfigured(): boolean {
   return Boolean(supabaseUrl && supabaseAnonKey)
@@ -198,6 +219,22 @@ export async function saveCategoryTargets(datasetId: string, targets: Record<str
   }
 }
 
+export async function saveDatasetSettings(datasetId: string, workDate: string): Promise<void> {
+  const supabase = getSupabaseClient()
+  const payload = {
+    dataset_id: datasetId,
+    work_date: workDate,
+  }
+
+  const { error } = await supabase.from('dataset_settings').upsert(payload, {
+    onConflict: 'dataset_id',
+  })
+
+  if (error) {
+    throw error
+  }
+}
+
 export async function insertFlights(datasetId: string, flights: FlightRecord[]): Promise<void> {
   const supabase = getSupabaseClient()
   const payload = flights.map((flight) => ({
@@ -227,10 +264,12 @@ export async function insertFlights(datasetId: string, flights: FlightRecord[]):
 export async function loadDataset(datasetId: string): Promise<{
   flights: FlightRecord[]
   targets: Record<string, number>
+  workDate: string | null
+  hasSavedConfig: boolean
 }> {
   const supabase = getSupabaseClient()
 
-  const [flightsResponse, targetsResponse] = await Promise.all([
+  const [flightsResponse, targetsResponse, settingsResponse] = await Promise.all([
     supabase
       .from('flights')
       .select(
@@ -240,6 +279,7 @@ export async function loadDataset(datasetId: string): Promise<{
       .order('fecha', { ascending: true })
       .order('hora', { ascending: true }),
     supabase.from('category_targets').select('category,target_percent').eq('dataset_id', datasetId),
+    supabase.from('dataset_settings').select('work_date').eq('dataset_id', datasetId).maybeSingle(),
   ])
 
   if (flightsResponse.error) {
@@ -248,13 +288,21 @@ export async function loadDataset(datasetId: string): Promise<{
   if (targetsResponse.error) {
     throw targetsResponse.error
   }
+  if (settingsResponse.error && !isMissingTableError(settingsResponse.error)) {
+    throw settingsResponse.error
+  }
 
   const flightsRows = (flightsResponse.data ?? []) as FlightRow[]
   const targetRows = (targetsResponse.data ?? []) as CategoryTargetRow[]
+  const settingsRow = (settingsResponse.data ?? null) as DatasetSettingsRow | null
+  const workDate = settingsRow?.work_date ?? null
+  const hasSavedConfig = targetRows.length > 0 && Boolean(workDate)
 
   return {
     flights: flightsRows.map(mapFlightRow),
     targets: Object.fromEntries(targetRows.map((row) => [row.category, row.target_percent])),
+    workDate,
+    hasSavedConfig,
   }
 }
 
@@ -316,6 +364,7 @@ export function subscribeRealtime(
   datasetId: string,
   onFlightChange: (flight: FlightRecord) => void,
   onTargetChange: (targets: Record<string, number>) => void,
+  onSettingsChange: (workDate: string) => void,
   onStatus: (status: RealtimeStatus) => void,
 ): () => void {
   const supabase = getSupabaseClient()
@@ -353,6 +402,24 @@ export function subscribeRealtime(
         const row = payload.new as CategoryTargetRow
         targetState[row.category] = row.target_percent
         onTargetChange({ ...targetState })
+      },
+    )
+    .on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'dataset_settings',
+        filter: `dataset_id=eq.${datasetId}`,
+      },
+      (payload) => {
+        if (!payload.new) {
+          return
+        }
+        const row = payload.new as DatasetSettingsRow
+        if (row.work_date) {
+          onSettingsChange(row.work_date)
+        }
       },
     )
     .subscribe((status) => {
