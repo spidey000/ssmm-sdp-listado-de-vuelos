@@ -21,6 +21,24 @@ Web operativa para control de vuelos protegidos por categoria (5.3, 5.4, 5.5, 5.
 - Progreso por categoria en tiempo real: `operados / minimo exigido`.
 - OTP solo para emails admitidos en `public.allowed_emails`.
 
+## Vista general del flujo
+
+Esta vista ofrece un resumen rapido del recorrido de los datos principales sin necesidad de leerlo todo.
+Muestra desde la carga del CSV hasta el control de OTP y la autoasignacion sincronizada.
+
+```mermaid
+flowchart LR
+  CSV["Carga CSV"] --> Parser["parseFlightsCsv"]
+  Parser --> Invitado["Estado guest local"]
+  Parser --> Datasets["Conjuntos de datos Supabase"]
+  Datasets --> Realtime["Canal realtime de Supabase"]
+  Realtime --> UI["Capa UI (React App)"]
+  UI -->|consulta/actualiza| Datasets
+  UI -->|invoca| AutoAsign["RPC de autoasignacion"]
+  AutoAsign -->|actualiza| Datasets
+  UI <--> OTP["OTP validado"]
+```
+
 ## Puesta en marcha
 
 1. Instala dependencias:
