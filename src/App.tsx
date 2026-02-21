@@ -113,11 +113,37 @@ const parseCsvDateToIso = (input: string): string => {
   return `${year.padStart(4, '0')}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`
 }
 
-const inferWorkDate = (flights: FlightRecord[]): string => {
-  if (flights.length === 0) {
+const isIsoDate = (value: string): boolean => {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value)
+}
+
+const normalizeWorkDate = (value: string | null): string => {
+  if (!value) {
     return ''
   }
-  return parseCsvDateToIso(flights[0].fecha)
+  if (isIsoDate(value)) {
+    return value
+  }
+  return parseCsvDateToIso(value)
+}
+
+const getAvailableWorkDays = (flights: FlightRecord[]): Array<{ iso: string; label: string }> => {
+  const map = new Map<string, string>()
+  for (const flight of flights) {
+    const iso = parseCsvDateToIso(flight.fecha)
+    if (!iso || map.has(iso)) {
+      continue
+    }
+    map.set(iso, flight.fecha)
+  }
+
+  return [...map.entries()]
+    .map(([iso, label]) => ({ iso, label }))
+    .sort((a, b) => a.iso.localeCompare(b.iso))
+}
+
+const inferWorkDate = (flights: FlightRecord[]): string => {
+  return getAvailableWorkDays(flights)[0]?.iso ?? ''
 }
 
 const buildOperatedUpdate = (flight: FlightRecord, operatorEmail: string): FlightRecord => {
@@ -173,15 +199,38 @@ function App() {
     return sortCategories(merged)
   }, [flights, draftTargets])
 
+  const availableWorkDays = useMemo(() => getAvailableWorkDays(flights), [flights])
+
+  const availableWorkDayValues = useMemo(() => {
+    return new Set(availableWorkDays.map((day) => day.iso))
+  }, [availableWorkDays])
+
+  const selectedWorkDate = parametersLocked ? workDate : draftWorkDate
+
+  const selectedWorkDateLabel = useMemo(() => {
+    if (!selectedWorkDate) {
+      return '--'
+    }
+    const match = availableWorkDays.find((day) => day.iso === selectedWorkDate)
+    return match?.label ?? selectedWorkDate
+  }, [availableWorkDays, selectedWorkDate])
+
+  const dayScopedFlights = useMemo(() => {
+    if (!selectedWorkDate) {
+      return flights
+    }
+    return flights.filter((flight) => parseCsvDateToIso(flight.fecha) === selectedWorkDate)
+  }, [flights, selectedWorkDate])
+
   const progressTargets = parametersLocked ? targets : draftTargets
 
   const progress = useMemo<CategoryProgress[]>(() => {
-    return buildCategoryProgress(flights, progressTargets)
-  }, [flights, progressTargets])
+    return buildCategoryProgress(dayScopedFlights, progressTargets)
+  }, [dayScopedFlights, progressTargets])
 
   const filteredFlights = useMemo(() => {
     const normalizedQuery = query.trim().toUpperCase()
-    return flights.filter((flight) => {
+    return dayScopedFlights.filter((flight) => {
       if (categoryFilter !== 'all' && flight.categoriaClasificacion !== categoryFilter) {
         return false
       }
@@ -201,7 +250,7 @@ function App() {
         .toUpperCase()
       return searchable.includes(normalizedQuery)
     })
-  }, [flights, categoryFilter, query])
+  }, [dayScopedFlights, categoryFilter, query])
 
   const totalPages = Math.max(1, Math.ceil(filteredFlights.length / PAGE_SIZE))
   const currentPageSafe = Math.min(currentPage, totalPages)
@@ -210,11 +259,23 @@ function App() {
     return filteredFlights.slice(from, from + PAGE_SIZE)
   }, [filteredFlights, currentPageSafe])
 
-  const totalOperated = useMemo(() => flights.filter((flight) => flight.operated).length, [flights])
+  const totalOperated = useMemo(() => dayScopedFlights.filter((flight) => flight.operated).length, [dayScopedFlights])
+
+  useEffect(() => {
+    if (availableWorkDays.length === 0) {
+      setWorkDate('')
+      setDraftWorkDate('')
+      return
+    }
+
+    const fallbackWorkDay = availableWorkDays[0].iso
+    setWorkDate((current) => (current && availableWorkDayValues.has(current) ? current : fallbackWorkDay))
+    setDraftWorkDate((current) => (current && availableWorkDayValues.has(current) ? current : fallbackWorkDay))
+  }, [availableWorkDays, availableWorkDayValues])
 
   useEffect(() => {
     setCurrentPage(1)
-  }, [query, categoryFilter, flights.length])
+  }, [query, categoryFilter, dayScopedFlights.length])
 
   useEffect(() => {
     if (mode !== 'supabase' || !supabaseConfigured) {
@@ -286,7 +347,7 @@ function App() {
           datasetState.flights.map((flight) => flight.categoriaClasificacion),
           datasetState.targets,
         )
-        const resolvedWorkDate = datasetState.workDate ?? inferWorkDate(datasetState.flights)
+        const resolvedWorkDate = normalizeWorkDate(datasetState.workDate) || inferWorkDate(datasetState.flights)
         setTargets(mergedTargets)
         setDraftTargets(mergedTargets)
         setWorkDate(resolvedWorkDate)
@@ -707,7 +768,7 @@ function App() {
               </button>
               <div className="banner-summary">
                 <span>CSV: {activeDatasetName || 'Sin archivo cargado'}</span>
-                <span>Dia activo: {workDate || '--'}</span>
+                <span>Dia activo: {selectedWorkDateLabel}</span>
                 <span>{parametersLocked ? 'Configuracion bloqueada' : 'Configuracion editable'}</span>
               </div>
             </div>
@@ -757,12 +818,20 @@ function App() {
 
                   <label>
                     Dia de trabajo
-                    <input
-                      type="date"
+                    <select
                       value={draftWorkDate}
                       onChange={(event) => setDraftWorkDate(event.target.value)}
                       disabled={parametersLocked || targetsBusy || flights.length === 0}
-                    />
+                    >
+                      {availableWorkDays.length === 0 ? (
+                        <option value="">Sin dias disponibles</option>
+                      ) : null}
+                      {availableWorkDays.map((day) => (
+                        <option key={day.iso} value={day.iso}>
+                          {day.label}
+                        </option>
+                      ))}
+                    </select>
                   </label>
 
                   <button
@@ -844,9 +913,13 @@ function App() {
                 <div className="table-toolbar">
                   <div className="toolbar-main">
                     <strong>
-                      {totalOperated} operados de {flights.length}
+                      {totalOperated} operados de {dayScopedFlights.length}
                     </strong>
-                    <span>{loadingDataset ? 'Cargando dataset...' : `${filteredFlights.length} vuelos visibles`}</span>
+                    <span>
+                      {loadingDataset
+                        ? 'Cargando dataset...'
+                        : `${filteredFlights.length} vuelos visibles (${selectedWorkDateLabel})`}
+                    </span>
                   </div>
                   <div className="toolbar-filters">
                     <input

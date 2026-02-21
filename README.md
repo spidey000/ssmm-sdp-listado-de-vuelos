@@ -11,8 +11,9 @@ Web operativa para control de vuelos protegidos por categoria (5.3, 5.4, 5.5, 5.
   - `CATEGORIA_CLASIFICACION`, `tipo`, `FECHA`, `HORA`, `CÍA`, `DSCIA`, `CDOCIA`, `VUELO`
 - Banner compacto (siempre disponible) con todos los parametros:
   - CSV activo
-  - dia de trabajo
+  - selector de dia (solo dias detectados en el CSV cargado)
   - porcentajes por categoria
+- Al seleccionar dia, la tabla y los calculos se filtran a ese dia.
 - Configuracion bloqueable: al guardar, sliders y fecha quedan desactivados y el boton pasa a `Modificar`.
 - Marcado de vuelo `Operado` con modal de confirmacion (irreversible).
 - Progreso por categoria en tiempo real: `operados / minimo exigido`.
@@ -66,6 +67,10 @@ Variables de entorno necesarias en Netlify:
 
 - `VITE_SUPABASE_URL`
 - `VITE_SUPABASE_ANON_KEY`
+
+Si Netlify bloquea el build por secrets scanning en variables `VITE_*` (esperado en frontend), este repo incluye `netlify.toml` con:
+
+- `SECRETS_SCAN_OMIT_KEYS=VITE_SUPABASE_URL,VITE_SUPABASE_ANON_KEY`
 
 No pongas en frontend:
 
