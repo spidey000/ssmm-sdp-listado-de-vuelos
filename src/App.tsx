@@ -7,6 +7,7 @@ import {
   getCurrentSession,
   insertFlights,
   currentUserIsAdmin,
+  currentUserIsAllowed,
   isSupabaseConfigured,
   listDatasets,
   loadDataset,
@@ -685,9 +686,35 @@ function App() {
 
     void getCurrentSession()
       .then((nextSession) => {
-        if (active) {
-          setSession(nextSession)
+        if (!active) {
+          return
         }
+
+        if (!nextSession) {
+          setSession(null)
+          return
+        }
+
+        void currentUserIsAllowed()
+          .then((allowed) => {
+            if (!active) {
+              return
+            }
+
+            if (!allowed) {
+              setError('Tu acceso fue revocado. Inicia sesión nuevamente con un correo autorizado.')
+              void signOut()
+              setSession(null)
+              return
+            }
+
+            setSession(nextSession)
+          })
+          .catch((authorizationError) => {
+            if (active) {
+              setError(getErrorMessage(authorizationError))
+            }
+          })
       })
       .catch((authError) => {
         if (active) {
@@ -696,7 +723,25 @@ function App() {
       })
 
     const unsubscribe = onAuthChange((_event, nextSession) => {
-      setSession(nextSession)
+      if (!nextSession) {
+        setSession(null)
+        return
+      }
+
+      void currentUserIsAllowed()
+        .then((allowed) => {
+          if (!allowed) {
+            setError('Tu acceso fue revocado. Inicia sesión nuevamente con un correo autorizado.')
+            void signOut()
+            setSession(null)
+            return
+          }
+
+          setSession(nextSession)
+        })
+        .catch((authorizationError) => {
+          setError(getErrorMessage(authorizationError))
+        })
     })
 
     return () => {
