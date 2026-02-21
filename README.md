@@ -51,6 +51,7 @@ npm run build
 
 - `supabase/migrations/20260221_add_dataset_settings.sql`
 - `supabase/migrations/20260221_add_auto_assignment.sql`
+- `supabase/migrations/20260221_fix_auto_assignment_day_scope.sql`
 
 4. Inserta los emails autorizados:
 

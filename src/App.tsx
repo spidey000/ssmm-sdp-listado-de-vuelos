@@ -110,20 +110,50 @@ const buildGuestSeedCsvFile = async (): Promise<File> => {
   return new File([csvBlob], GUEST_TEST_CSV_FILE_NAME, { type: 'text/csv' })
 }
 
+const buildIsoDate = (year: string, month: string, day: string): string => {
+  const normalizedYear = year.padStart(4, '0')
+  const normalizedMonth = month.padStart(2, '0')
+  const normalizedDay = day.padStart(2, '0')
+  const iso = `${normalizedYear}-${normalizedMonth}-${normalizedDay}`
+
+  const candidate = new Date(`${iso}T00:00:00Z`)
+  if (Number.isNaN(candidate.getTime())) {
+    return ''
+  }
+
+  if (
+    candidate.getUTCFullYear() !== Number(normalizedYear) ||
+    candidate.getUTCMonth() + 1 !== Number(normalizedMonth) ||
+    candidate.getUTCDate() !== Number(normalizedDay)
+  ) {
+    return ''
+  }
+
+  return iso
+}
+
 const parseCsvDateToIso = (input: string): string => {
-  const parts = input.trim().split('/')
-  if (parts.length !== 3) {
+  const value = input.trim()
+  if (!value) {
     return ''
   }
 
-  const day = parts[0]
-  const month = parts[1]
-  const year = parts[2]
-  if (!day || !month || !year) {
-    return ''
+  const isoMatch = value.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  if (isoMatch) {
+    return buildIsoDate(isoMatch[1], isoMatch[2], isoMatch[3])
   }
 
-  return `${year.padStart(4, '0')}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`
+  const slashMatch = value.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/)
+  if (slashMatch) {
+    return buildIsoDate(slashMatch[3], slashMatch[2], slashMatch[1])
+  }
+
+  const dashMatch = value.match(/^(\d{1,2})-(\d{1,2})-(\d{4})$/)
+  if (dashMatch) {
+    return buildIsoDate(dashMatch[3], dashMatch[2], dashMatch[1])
+  }
+
+  return ''
 }
 
 const isIsoDate = (value: string): boolean => {
@@ -1111,7 +1141,8 @@ function App() {
         throw new Error('Selecciona un dataset antes de autoasignar')
       }
 
-      const result = await runAutoAssignment(activeDatasetId, selectedWorkDate)
+      const selectedWorkDateRaw = availableWorkDays.find((day) => day.iso === selectedWorkDate)?.label ?? selectedWorkDate
+      const result = await runAutoAssignment(activeDatasetId, selectedWorkDateRaw)
 
       const datasetState = await loadDataset(activeDatasetId)
       setFlights(datasetState.flights)

@@ -235,6 +235,53 @@ before insert or update on public.flights
 for each row
 execute function public.enforce_flight_operated_rules();
 
+create or replace function public.parse_work_date(p_value text)
+returns date
+language plpgsql
+immutable
+as $$
+declare
+  v_value text := trim(coalesce(p_value, ''));
+  v_parts text[];
+  v_date date;
+  v_normalized text;
+begin
+  if v_value = '' then
+    return null;
+  end if;
+
+  if v_value ~ '^\d{4}-\d{2}-\d{2}$' then
+    v_date := to_date(v_value, 'YYYY-MM-DD');
+    if to_char(v_date, 'YYYY-MM-DD') = v_value then
+      return v_date;
+    end if;
+    return null;
+  end if;
+
+  if v_value ~ '^\d{1,2}/\d{1,2}/\d{4}$' then
+    v_parts := regexp_split_to_array(v_value, '/');
+    v_normalized := lpad(v_parts[1], 2, '0') || '/' || lpad(v_parts[2], 2, '0') || '/' || v_parts[3];
+    v_date := to_date(v_normalized, 'DD/MM/YYYY');
+    if to_char(v_date, 'DD/MM/YYYY') = v_normalized then
+      return v_date;
+    end if;
+    return null;
+  end if;
+
+  if v_value ~ '^\d{1,2}-\d{1,2}-\d{4}$' then
+    v_parts := regexp_split_to_array(v_value, '-');
+    v_normalized := lpad(v_parts[1], 2, '0') || '-' || lpad(v_parts[2], 2, '0') || '-' || v_parts[3];
+    v_date := to_date(v_normalized, 'DD-MM-YYYY');
+    if to_char(v_date, 'DD-MM-YYYY') = v_normalized then
+      return v_date;
+    end if;
+    return null;
+  end if;
+
+  return null;
+end;
+$$;
+
 create or replace function public.run_auto_assignment(p_dataset_id uuid, p_work_date text)
 returns table(run_id uuid, seed text, work_date text, updated_flights integer, summary jsonb)
 language plpgsql
@@ -244,16 +291,21 @@ as $$
 declare
   v_seed text := encode(gen_random_bytes(8), 'hex');
   v_run_id uuid := gen_random_uuid();
+  v_work_date date;
+  v_work_date_iso text;
 begin
   if not public.current_user_is_allowed() then
     raise exception 'Usuario no autorizado para autoasignacion';
   end if;
 
-  if coalesce(trim(p_work_date), '') = '' then
-    raise exception 'Debes indicar un dia de trabajo';
+  v_work_date := public.parse_work_date(p_work_date);
+  if v_work_date is null then
+    raise exception 'Debes indicar un dia de trabajo valido';
   end if;
 
-  perform pg_advisory_xact_lock(hashtext('auto_assign|' || p_dataset_id::text || '|' || p_work_date)::bigint);
+  v_work_date_iso := to_char(v_work_date, 'YYYY-MM-DD');
+
+  perform pg_advisory_xact_lock(hashtext('auto_assign|' || p_dataset_id::text || '|' || v_work_date_iso)::bigint);
 
   if not exists (select 1 from public.datasets d where d.id = p_dataset_id) then
     raise exception 'Dataset no encontrado';
@@ -275,7 +327,7 @@ begin
       on ct.dataset_id = f.dataset_id
      and ct.category = f.categoria_clasificacion
     where f.dataset_id = p_dataset_id
-      and f.fecha = p_work_date
+      and public.parse_work_date(f.fecha) = v_work_date
   ), decision as (
     select
       fd.id,
@@ -338,7 +390,7 @@ begin
     select
       v_run_id,
       p_dataset_id,
-      p_work_date,
+      v_work_date_iso,
       v_seed,
       sj.payload,
       coalesce((select count(*) from updated), 0),
