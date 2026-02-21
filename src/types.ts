@@ -1,4 +1,5 @@
 export type AppMode = 'guest' | 'supabase'
+export type ServiceFlag = 'ATENDER' | 'NO_ATENDER'
 
 export interface FlightRecord {
   id: string
@@ -15,6 +16,11 @@ export interface FlightRecord {
   operated: boolean
   operatedAt: string | null
   operatedByEmail: string | null
+  serviceFlag: ServiceFlag | null
+  serviceFlagSource: 'auto' | 'manual' | null
+  serviceFlagUpdatedAt: string | null
+  serviceFlagUpdatedByEmail: string | null
+  serviceFlagRunId: string | null
 }
 
 export interface ParsedCsvResult {
@@ -37,4 +43,20 @@ export interface DatasetSummary {
   id: string
   name: string
   createdAt: string
+}
+
+export interface AutoAssignmentSummary {
+  category: string
+  total: number
+  targetPercent: number
+  requiredCount: number
+  assignedCount: number
+}
+
+export interface AutoAssignmentResult {
+  runId: string
+  seed: string
+  workDate: string
+  updatedFlights: number
+  summary: AutoAssignmentSummary[]
 }

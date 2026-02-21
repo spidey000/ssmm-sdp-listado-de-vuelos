@@ -12,6 +12,7 @@ import {
   markFlightOperated,
   onAuthChange,
   requestOtp,
+  runAutoAssignment,
   saveCategoryTargets,
   saveDatasetSettings,
   signOut,
@@ -155,6 +156,91 @@ const buildOperatedUpdate = (flight: FlightRecord, operatorEmail: string): Fligh
   }
 }
 
+const hashString = (input: string): number => {
+  let hash = 0
+  for (let index = 0; index < input.length; index += 1) {
+    hash = (hash * 31 + input.charCodeAt(index)) >>> 0
+  }
+  return hash
+}
+
+const buildGuestAutoAssignment = (
+  flights: FlightRecord[],
+  targets: Record<string, number>,
+  workDateIso: string,
+): {
+  updatedFlights: FlightRecord[]
+  seed: string
+  summaryLines: string[]
+  updatedCount: number
+} => {
+  const seed = crypto.randomUUID().slice(0, 8)
+  const dayFlights = flights.filter((flight) => parseCsvDateToIso(flight.fecha) === workDateIso)
+  const byCategory = new Map<string, FlightRecord[]>()
+
+  for (const flight of dayFlights) {
+    const bucket = byCategory.get(flight.categoriaClasificacion)
+    if (bucket) {
+      bucket.push(flight)
+    } else {
+      byCategory.set(flight.categoriaClasificacion, [flight])
+    }
+  }
+
+  const attendIds = new Set<string>()
+  const summaryLines: string[] = []
+
+  for (const [category, categoryFlights] of byCategory.entries()) {
+    const targetPercent = clampPercent(targets[category] ?? DEFAULT_TARGETS[category] ?? 0)
+    const total = categoryFlights.length
+    const minimumRequiredRaw = Math.ceil((total * targetPercent) / 100)
+    const minimumRequired = Math.min(total, minimumRequiredRaw)
+
+    const rankedFlights = [...categoryFlights].sort((a, b) => {
+      const aHash = hashString(`${seed}|${a.flightKey}`)
+      const bHash = hashString(`${seed}|${b.flightKey}`)
+      if (aHash !== bHash) {
+        return aHash - bHash
+      }
+      return a.flightKey.localeCompare(b.flightKey)
+    })
+
+    for (let index = 0; index < minimumRequired; index += 1) {
+      const selectedFlight = rankedFlights[index]
+      if (selectedFlight) {
+        attendIds.add(selectedFlight.id)
+      }
+    }
+
+    summaryLines.push(`${category}: ${minimumRequired}/${total} (${targetPercent}%)`)
+  }
+
+  const runId = `guest-${crypto.randomUUID()}`
+  const timestamp = new Date().toISOString()
+
+  const updatedFlights = flights.map((flight) => {
+    if (parseCsvDateToIso(flight.fecha) !== workDateIso) {
+      return flight
+    }
+    const shouldAttend = attendIds.has(flight.id)
+    return {
+      ...flight,
+      serviceFlag: shouldAttend ? ('ATENDER' as const) : ('NO_ATENDER' as const),
+      serviceFlagSource: 'auto' as const,
+      serviceFlagUpdatedAt: timestamp,
+      serviceFlagUpdatedByEmail: 'guest-test',
+      serviceFlagRunId: runId,
+    }
+  })
+
+  return {
+    updatedFlights,
+    seed,
+    summaryLines,
+    updatedCount: dayFlights.length,
+  }
+}
+
 function App() {
   const supabaseConfigured = isSupabaseConfigured()
   const [mode, setMode] = useState<AppMode>(supabaseConfigured ? 'supabase' : 'guest')
@@ -180,12 +266,15 @@ function App() {
   const [targetsOpen, setTargetsOpen] = useState(true)
   const [query, setQuery] = useState('')
   const [categoryFilter, setCategoryFilter] = useState('all')
+  const [serviceFlagFilter, setServiceFlagFilter] = useState<'all' | 'ATENDER' | 'NO_ATENDER'>('all')
   const [currentPage, setCurrentPage] = useState(1)
 
   const [confirmFlight, setConfirmFlight] = useState<FlightRecord | null>(null)
+  const [confirmAutoAssign, setConfirmAutoAssign] = useState(false)
   const [uploadBusy, setUploadBusy] = useState(false)
   const [markBusy, setMarkBusy] = useState(false)
   const [targetsBusy, setTargetsBusy] = useState(false)
+  const [autoAssignBusy, setAutoAssignBusy] = useState(false)
   const [loadingDataset, setLoadingDataset] = useState(false)
 
   const [notice, setNotice] = useState('')
@@ -234,6 +323,9 @@ function App() {
       if (categoryFilter !== 'all' && flight.categoriaClasificacion !== categoryFilter) {
         return false
       }
+      if (serviceFlagFilter !== 'all' && flight.serviceFlag !== serviceFlagFilter) {
+        return false
+      }
       if (!normalizedQuery) {
         return true
       }
@@ -250,7 +342,7 @@ function App() {
         .toUpperCase()
       return searchable.includes(normalizedQuery)
     })
-  }, [dayScopedFlights, categoryFilter, query])
+  }, [dayScopedFlights, categoryFilter, serviceFlagFilter, query])
 
   const totalPages = Math.max(1, Math.ceil(filteredFlights.length / PAGE_SIZE))
   const currentPageSafe = Math.min(currentPage, totalPages)
@@ -260,6 +352,14 @@ function App() {
   }, [filteredFlights, currentPageSafe])
 
   const totalOperated = useMemo(() => dayScopedFlights.filter((flight) => flight.operated).length, [dayScopedFlights])
+  const totalAttendAssigned = useMemo(
+    () => dayScopedFlights.filter((flight) => flight.serviceFlag === 'ATENDER').length,
+    [dayScopedFlights],
+  )
+  const totalNoAttendAssigned = useMemo(
+    () => dayScopedFlights.filter((flight) => flight.serviceFlag === 'NO_ATENDER').length,
+    [dayScopedFlights],
+  )
 
   useEffect(() => {
     if (availableWorkDays.length === 0) {
@@ -275,7 +375,7 @@ function App() {
 
   useEffect(() => {
     setCurrentPage(1)
-  }, [query, categoryFilter, dayScopedFlights.length])
+  }, [query, categoryFilter, serviceFlagFilter, dayScopedFlights.length])
 
   useEffect(() => {
     if (mode !== 'supabase' || !supabaseConfigured) {
@@ -415,6 +515,7 @@ function App() {
     setNotice('')
     setError('')
     setCategoryFilter('all')
+    setServiceFlagFilter('all')
     setQuery('')
     setRealtimeStatus('LOCAL')
   }
@@ -476,6 +577,7 @@ function App() {
       setWorkDate('')
       setDraftWorkDate('')
       setParametersLocked(false)
+      setServiceFlagFilter('all')
     } catch (signOutError) {
       setError(getErrorMessage(signOutError))
     }
@@ -491,6 +593,7 @@ function App() {
       setWorkDate('')
       setDraftWorkDate('')
       setParametersLocked(false)
+      setServiceFlagFilter('all')
       return
     }
 
@@ -620,6 +723,65 @@ function App() {
     }
   }
 
+  const handleOpenAutoAssignModal = (): void => {
+    if (!selectedWorkDate) {
+      setError('Selecciona un dia valido antes de autoasignar')
+      return
+    }
+    if (!parametersLocked) {
+      setError('Guarda los parametros primero para autoasignar')
+      return
+    }
+    if (dayScopedFlights.length === 0) {
+      setError('No hay vuelos para el dia seleccionado')
+      return
+    }
+    setConfirmAutoAssign(true)
+  }
+
+  const handleConfirmAutoAssign = async (): Promise<void> => {
+    if (!selectedWorkDate) {
+      setError('Dia de trabajo invalido')
+      return
+    }
+
+    setAutoAssignBusy(true)
+    setError('')
+
+    try {
+      if (mode === 'guest') {
+        const guestResult = buildGuestAutoAssignment(flights, targets, selectedWorkDate)
+        setFlights(guestResult.updatedFlights)
+        setNotice(
+          `Autoasignacion local aplicada (${guestResult.updatedCount} vuelos). Seed ${guestResult.seed}. ${guestResult.summaryLines.join(' · ')}`,
+        )
+        setConfirmAutoAssign(false)
+        return
+      }
+
+      if (!activeDatasetId) {
+        throw new Error('Selecciona un dataset antes de autoasignar')
+      }
+
+      const result = await runAutoAssignment(activeDatasetId, selectedWorkDate)
+
+      const datasetState = await loadDataset(activeDatasetId)
+      setFlights(datasetState.flights)
+
+      const summaryLabel = result.summary
+        .map((item) => `${item.category}: ${item.assignedCount}/${item.total}`)
+        .join(' · ')
+      setNotice(
+        `Autoasignacion aplicada para ${result.workDate} (${result.updatedFlights} vuelos, seed ${result.seed}). ${summaryLabel}`,
+      )
+      setConfirmAutoAssign(false)
+    } catch (autoError) {
+      setError(getErrorMessage(autoError))
+    } finally {
+      setAutoAssignBusy(false)
+    }
+  }
+
   const handleOpenMarkModal = (flight: FlightRecord): void => {
     if (flight.operated) {
       return
@@ -673,6 +835,14 @@ function App() {
   const showAuthGate = mode === 'supabase' && !session
   const uploadDisabled = uploadBusy || (mode === 'supabase' && !session)
   const parametersActionLabel = parametersLocked ? 'Modificar' : targetsBusy ? 'Guardando...' : 'Guardar parametros'
+  const autoAssignDisabled =
+    autoAssignBusy ||
+    !parametersLocked ||
+    !selectedWorkDate ||
+    dayScopedFlights.length === 0 ||
+    (mode === 'supabase' && !activeDatasetId)
+  const confirmFlightIsNoAttend = confirmFlight?.serviceFlag === 'NO_ATENDER'
+  const confirmFlightIsAttend = confirmFlight?.serviceFlag === 'ATENDER'
 
   return (
     <div className="app-shell">
@@ -841,10 +1011,20 @@ function App() {
                   >
                     {parametersActionLabel}
                   </button>
+
+                  <button
+                    type="button"
+                    className="danger-btn"
+                    onClick={handleOpenAutoAssignModal}
+                    disabled={autoAssignDisabled}
+                  >
+                    {autoAssignBusy ? 'Autoasignando...' : 'Autoasignar'}
+                  </button>
                 </div>
 
                 <p className="banner-hint">
                   Define porcentajes y dia, guarda parametros y quedaran bloqueados. Para cambiarlos pulsa "Modificar".
+                  Usa "Autoasignar" para etiquetar ATENDER/NO ATENDER aleatoriamente para todo el equipo.
                 </p>
 
                 <div className="targets-grid">
@@ -920,6 +1100,7 @@ function App() {
                         ? 'Cargando dataset...'
                         : `${filteredFlights.length} vuelos visibles (${selectedWorkDateLabel})`}
                     </span>
+                    <span>Etiquetas: {totalAttendAssigned} ATENDER · {totalNoAttendAssigned} NO ATENDER</span>
                   </div>
                   <div className="toolbar-filters">
                     <input
@@ -936,6 +1117,16 @@ function App() {
                         </option>
                       ))}
                     </select>
+                    <select
+                      value={serviceFlagFilter}
+                      onChange={(event) =>
+                        setServiceFlagFilter(event.target.value as 'all' | 'ATENDER' | 'NO_ATENDER')
+                      }
+                    >
+                      <option value="all">Todas las etiquetas</option>
+                      <option value="ATENDER">ATENDER</option>
+                      <option value="NO_ATENDER">NO ATENDER</option>
+                    </select>
                   </div>
                 </div>
 
@@ -949,6 +1140,7 @@ function App() {
                         <th>Vuelo</th>
                         <th>Tipo</th>
                         <th>Categoria</th>
+                        <th>Etiqueta</th>
                         <th>Marcado por</th>
                       </tr>
                     </thead>
@@ -958,7 +1150,15 @@ function App() {
                           <td>
                             <button
                               type="button"
-                              className={flight.operated ? 'operate-btn operate-btn--locked' : 'operate-btn'}
+                              className={
+                                flight.operated
+                                  ? 'operate-btn operate-btn--locked'
+                                  : flight.serviceFlag === 'NO_ATENDER'
+                                    ? 'operate-btn operate-btn--alert'
+                                    : flight.serviceFlag === 'ATENDER'
+                                      ? 'operate-btn operate-btn--attend'
+                                      : 'operate-btn'
+                              }
                               disabled={flight.operated || markBusy}
                               onClick={() => handleOpenMarkModal(flight)}
                             >
@@ -974,6 +1174,22 @@ function App() {
                           <td>{flight.vuelo}</td>
                           <td>{flight.tipo}</td>
                           <td>{flight.categoriaClasificacion}</td>
+                          <td>
+                            {flight.serviceFlag ? (
+                              <span
+                                className={
+                                  flight.serviceFlag === 'ATENDER'
+                                    ? 'service-badge service-badge--attend'
+                                    : 'service-badge service-badge--no-attend'
+                                }
+                              >
+                                {flight.serviceFlag}
+                              </span>
+                            ) : (
+                              <span className="service-badge service-badge--none">Sin etiqueta</span>
+                            )}
+                            <small>{flight.serviceFlagUpdatedByEmail ?? '--'}</small>
+                          </td>
                           <td>
                             {flight.operatedByEmail ?? '--'}
                             <small>{formatDateTime(flight.operatedAt)}</small>
@@ -1014,7 +1230,18 @@ function App() {
       {confirmFlight ? (
         <div className="modal-backdrop" role="presentation" onClick={() => setConfirmFlight(null)}>
           <div className="modal" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
-            <h2>Confirmar vuelo operado</h2>
+            <h2>{confirmFlightIsNoAttend ? 'Vuelo marcado como NO ATENDER' : 'Confirmar vuelo operado'}</h2>
+            {confirmFlightIsNoAttend ? (
+              <p className="modal-warning">
+                El vuelo <strong>{confirmFlight.vuelo}</strong> de <strong>{confirmFlight.dscia}</strong> esta etiquetado
+                como <strong>NO ATENDER</strong> por autoasignacion.
+              </p>
+            ) : null}
+            {confirmFlightIsAttend ? (
+              <p className="modal-info">
+                Este vuelo esta etiquetado como <strong>ATENDER</strong>.
+              </p>
+            ) : null}
             <p>
               Vas a marcar como <strong>operado</strong> el vuelo <strong>{confirmFlight.vuelo}</strong> de{' '}
               <strong>{confirmFlight.dscia}</strong>.
@@ -1026,6 +1253,35 @@ function App() {
               </button>
               <button type="button" onClick={() => void handleConfirmMarkOperated()} disabled={markBusy}>
                 {markBusy ? 'Confirmando...' : 'Confirmar operado'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {confirmAutoAssign ? (
+        <div className="modal-backdrop" role="presentation" onClick={() => !autoAssignBusy && setConfirmAutoAssign(false)}>
+          <div className="modal" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
+            <h2>Confirmar autoasignacion</h2>
+            <p>
+              Se asignaran de forma aleatoria y compartida etiquetas <strong>ATENDER</strong> /{' '}
+              <strong>NO ATENDER</strong> para el dia <strong>{selectedWorkDateLabel}</strong>.
+            </p>
+            <p>
+              El calculo se hace por categoria usando redondeo al entero superior y nunca supera el porcentaje
+              configurado.
+            </p>
+            <div className="modal-actions">
+              <button
+                type="button"
+                className="secondary-btn"
+                onClick={() => setConfirmAutoAssign(false)}
+                disabled={autoAssignBusy}
+              >
+                Cancelar
+              </button>
+              <button type="button" className="danger-btn" onClick={() => void handleConfirmAutoAssign()} disabled={autoAssignBusy}>
+                {autoAssignBusy ? 'Autoasignando...' : 'Confirmar autoasignacion'}
               </button>
             </div>
           </div>

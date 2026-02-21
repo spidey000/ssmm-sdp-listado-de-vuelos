@@ -1,5 +1,5 @@
 import { createClient, type AuthChangeEvent, type Session, type SupabaseClient } from '@supabase/supabase-js'
-import type { DatasetSummary, FlightRecord } from '../types'
+import type { AutoAssignmentResult, AutoAssignmentSummary, DatasetSummary, FlightRecord } from '../types'
 
 interface DatasetRow {
   id: string
@@ -22,6 +22,11 @@ interface FlightRow {
   operated: boolean
   operated_at: string | null
   operated_by_email: string | null
+  service_flag: 'ATENDER' | 'NO_ATENDER' | null
+  service_flag_source: 'auto' | 'manual' | null
+  service_flag_updated_at: string | null
+  service_flag_updated_by_email: string | null
+  service_flag_run_id: string | null
 }
 
 interface CategoryTargetRow {
@@ -31,6 +36,14 @@ interface CategoryTargetRow {
 
 interface DatasetSettingsRow {
   work_date: string
+}
+
+interface AutoAssignmentRpcRow {
+  run_id: string
+  seed: string
+  work_date: string
+  updated_flights: number
+  summary: AutoAssignmentSummary[]
 }
 
 type RealtimeStatus = 'SUBSCRIBED' | 'CLOSED' | 'CHANNEL_ERROR' | 'TIMED_OUT'
@@ -55,6 +68,11 @@ const mapFlightRow = (row: FlightRow): FlightRecord => ({
   operated: row.operated,
   operatedAt: row.operated_at,
   operatedByEmail: row.operated_by_email,
+  serviceFlag: row.service_flag,
+  serviceFlagSource: row.service_flag_source,
+  serviceFlagUpdatedAt: row.service_flag_updated_at,
+  serviceFlagUpdatedByEmail: row.service_flag_updated_by_email,
+  serviceFlagRunId: row.service_flag_run_id,
 })
 
 const normalizeEmail = (email: string): string => email.trim().toLowerCase()
@@ -235,6 +253,33 @@ export async function saveDatasetSettings(datasetId: string, workDate: string): 
   }
 }
 
+export async function runAutoAssignment(datasetId: string, workDate: string): Promise<AutoAssignmentResult> {
+  const supabase = getSupabaseClient()
+  const { data, error } = await supabase.rpc('run_auto_assignment', {
+    p_dataset_id: datasetId,
+    p_work_date: workDate,
+  })
+
+  if (error) {
+    throw error
+  }
+
+  const row = (Array.isArray(data) ? data[0] : data) as AutoAssignmentRpcRow | undefined
+  if (!row) {
+    throw new Error('No se recibio respuesta de autoasignacion')
+  }
+
+  const summary = Array.isArray(row.summary) ? row.summary : []
+
+  return {
+    runId: row.run_id,
+    seed: row.seed,
+    workDate: row.work_date,
+    updatedFlights: Number(row.updated_flights ?? 0),
+    summary,
+  }
+}
+
 export async function insertFlights(datasetId: string, flights: FlightRecord[]): Promise<void> {
   const supabase = getSupabaseClient()
   const payload = flights.map((flight) => ({
@@ -273,7 +318,7 @@ export async function loadDataset(datasetId: string): Promise<{
     supabase
       .from('flights')
       .select(
-        'id,dataset_id,flight_key,categoria_clasificacion,tipo,fecha,hora,cia,dscia,cdocia,vuelo,operated,operated_at,operated_by_email',
+        'id,dataset_id,flight_key,categoria_clasificacion,tipo,fecha,hora,cia,dscia,cdocia,vuelo,operated,operated_at,operated_by_email,service_flag,service_flag_source,service_flag_updated_at,service_flag_updated_by_email,service_flag_run_id',
       )
       .eq('dataset_id', datasetId)
       .order('fecha', { ascending: true })
@@ -321,7 +366,7 @@ export async function markFlightOperated(
     .eq('id', flightId)
     .eq('operated', false)
     .select(
-      'id,dataset_id,flight_key,categoria_clasificacion,tipo,fecha,hora,cia,dscia,cdocia,vuelo,operated,operated_at,operated_by_email',
+      'id,dataset_id,flight_key,categoria_clasificacion,tipo,fecha,hora,cia,dscia,cdocia,vuelo,operated,operated_at,operated_by_email,service_flag,service_flag_source,service_flag_updated_at,service_flag_updated_by_email,service_flag_run_id',
     )
     .maybeSingle()
 

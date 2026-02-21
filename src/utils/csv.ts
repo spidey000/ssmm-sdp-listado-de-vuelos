@@ -103,6 +103,11 @@ export async function parseFlightsCsv(file: File): Promise<ParsedCsvResult> {
       operated: false,
       operatedAt: null,
       operatedByEmail: null,
+      serviceFlag: null,
+      serviceFlagSource: null,
+      serviceFlagUpdatedAt: null,
+      serviceFlagUpdatedByEmail: null,
+      serviceFlagRunId: null,
     }
 
     const flightKey = buildFlightKey(baseFlight)

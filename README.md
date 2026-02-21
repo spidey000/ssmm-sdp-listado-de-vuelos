@@ -16,6 +16,8 @@ Web operativa para control de vuelos protegidos por categoria (5.3, 5.4, 5.5, 5.
 - Al seleccionar dia, la tabla y los calculos se filtran a ese dia.
 - Configuracion bloqueable: al guardar, sliders y fecha quedan desactivados y el boton pasa a `Modificar`.
 - Marcado de vuelo `Operado` con modal de confirmacion (irreversible).
+- Autoasignacion compartida por equipo (`ATENDER` / `NO ATENDER`) con reparto aleatorio por categoria,
+  respetando `ceil(total * porcentaje / 100)` por cada categoria.
 - Progreso por categoria en tiempo real: `operados / minimo exigido`.
 - OTP solo para emails admitidos en `public.allowed_emails`.
 
@@ -48,6 +50,7 @@ npm run build
 3. Si el proyecto ya estaba creado antes de `dataset_settings`, pega y ejecuta tambien el SQL de:
 
 - `supabase/migrations/20260221_add_dataset_settings.sql`
+- `supabase/migrations/20260221_add_auto_assignment.sql`
 
 4. Inserta los emails autorizados:
 
