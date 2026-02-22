@@ -7,6 +7,7 @@ import {
   getCurrentSession,
   insertFlights,
   currentUserIsAdmin,
+  currentUserIsAllowed,
   isSupabaseConfigured,
   listDatasets,
   loadDataset,
@@ -685,9 +686,35 @@ function App() {
 
     void getCurrentSession()
       .then((nextSession) => {
-        if (active) {
-          setSession(nextSession)
+        if (!active) {
+          return
         }
+
+        if (!nextSession) {
+          setSession(null)
+          return
+        }
+
+        void currentUserIsAllowed()
+          .then((allowed) => {
+            if (!active) {
+              return
+            }
+
+            if (!allowed) {
+              setError('Tu acceso fue revocado. Inicia sesión nuevamente con un correo autorizado.')
+              void signOut()
+              setSession(null)
+              return
+            }
+
+            setSession(nextSession)
+          })
+          .catch((authorizationError) => {
+            if (active) {
+              setError(getErrorMessage(authorizationError))
+            }
+          })
       })
       .catch((authError) => {
         if (active) {
@@ -696,7 +723,25 @@ function App() {
       })
 
     const unsubscribe = onAuthChange((_event, nextSession) => {
-      setSession(nextSession)
+      if (!nextSession) {
+        setSession(null)
+        return
+      }
+
+      void currentUserIsAllowed()
+        .then((allowed) => {
+          if (!allowed) {
+            setError('Tu acceso fue revocado. Inicia sesión nuevamente con un correo autorizado.')
+            void signOut()
+            setSession(null)
+            return
+          }
+
+          setSession(nextSession)
+        })
+        .catch((authorizationError) => {
+          setError(getErrorMessage(authorizationError))
+        })
     })
 
     return () => {
@@ -1038,11 +1083,33 @@ function App() {
   }, [mode, flights.length, activeDatasetName, handleFileSelected])
 
   const handleDraftTargetChange = (category: string, rawValue: string): void => {
+    if (mode === 'supabase' && !isAdminUser) {
+      setError('Solo administradores pueden modificar los parametros')
+      return
+    }
+
+    if (parametersLocked) {
+      return
+    }
+
     const numericValue = clampPercent(Number(rawValue))
     setDraftTargets((currentTargets) => ({
       ...currentTargets,
       [category]: numericValue,
     }))
+  }
+
+  const handleDraftWorkDateChange = (nextWorkDate: string): void => {
+    if (mode === 'supabase' && !isAdminUser) {
+      setError('Solo administradores pueden modificar los parametros')
+      return
+    }
+
+    if (parametersLocked || targetsBusy || flights.length === 0) {
+      return
+    }
+
+    setDraftWorkDate(nextWorkDate)
   }
 
   const handleParametersAction = async (): Promise<void> => {
@@ -1418,7 +1485,7 @@ function App() {
                     Dia de trabajo
                     <select
                       value={draftWorkDate}
-                      onChange={(event) => setDraftWorkDate(event.target.value)}
+                      onChange={(event) => handleDraftWorkDateChange(event.target.value)}
                       disabled={parametersLocked || targetsBusy || flights.length === 0 || !canManageConfig}
                     >
                       {availableWorkDays.length === 0 ? (

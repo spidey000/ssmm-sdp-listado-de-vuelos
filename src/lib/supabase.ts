@@ -152,6 +152,15 @@ export async function currentUserIsAdmin(): Promise<boolean> {
   return Boolean(data)
 }
 
+export async function currentUserIsAllowed(): Promise<boolean> {
+  const supabase = getSupabaseClient()
+  const { data, error } = await supabase.rpc('current_user_is_allowed')
+  if (error) {
+    throw error
+  }
+  return Boolean(data)
+}
+
 export async function requestOtp(email: string): Promise<void> {
   const supabase = getSupabaseClient()
   const normalizedEmail = normalizeEmail(email)
@@ -183,6 +192,12 @@ export async function verifyOtp(email: string, token: string): Promise<void> {
   })
   if (error) {
     throw error
+  }
+
+  const allowed = await currentUserIsAllowed()
+  if (!allowed) {
+    await signOut()
+    throw new Error('Usuario autenticado sin autorización vigente')
   }
 }
 
