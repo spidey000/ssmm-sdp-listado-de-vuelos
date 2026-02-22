@@ -1083,11 +1083,33 @@ function App() {
   }, [mode, flights.length, activeDatasetName, handleFileSelected])
 
   const handleDraftTargetChange = (category: string, rawValue: string): void => {
+    if (mode === 'supabase' && !isAdminUser) {
+      setError('Solo administradores pueden modificar los parametros')
+      return
+    }
+
+    if (parametersLocked) {
+      return
+    }
+
     const numericValue = clampPercent(Number(rawValue))
     setDraftTargets((currentTargets) => ({
       ...currentTargets,
       [category]: numericValue,
     }))
+  }
+
+  const handleDraftWorkDateChange = (nextWorkDate: string): void => {
+    if (mode === 'supabase' && !isAdminUser) {
+      setError('Solo administradores pueden modificar los parametros')
+      return
+    }
+
+    if (parametersLocked || targetsBusy || flights.length === 0) {
+      return
+    }
+
+    setDraftWorkDate(nextWorkDate)
   }
 
   const handleParametersAction = async (): Promise<void> => {
@@ -1463,7 +1485,7 @@ function App() {
                     Dia de trabajo
                     <select
                       value={draftWorkDate}
-                      onChange={(event) => setDraftWorkDate(event.target.value)}
+                      onChange={(event) => handleDraftWorkDateChange(event.target.value)}
                       disabled={parametersLocked || targetsBusy || flights.length === 0 || !canManageConfig}
                     >
                       {availableWorkDays.length === 0 ? (
