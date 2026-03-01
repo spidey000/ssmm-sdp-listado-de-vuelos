@@ -238,6 +238,123 @@ h2, h3, p {
   max-width: 480px;
   display: grid;
   gap: 0.85rem;
+  margin: 2rem auto;
+}
+
+.auth-card--centered {
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* ===== PUBLIC STATS ===== */
+.public-stats {
+  max-width: 480px;
+  margin: 0 auto 1.5rem;
+}
+
+.public-stats__header {
+  text-align: center;
+  margin-bottom: 0.75rem;
+}
+
+.public-stats__header h2 {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 0.2rem;
+}
+
+.public-stats__header p {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.public-stats__kpi-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.5rem;
+  margin-bottom: 0.6rem;
+}
+
+.public-stats__kpi {
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 0.55rem;
+  text-align: center;
+}
+
+.public-stats__kpi-label {
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  margin-bottom: 0.2rem;
+}
+
+.public-stats__kpi-value {
+  font-family: var(--font-mono);
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.public-stats__kpi-value--highlight {
+  color: var(--accent-primary);
+}
+
+.public-stats__categories {
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 0.65rem;
+}
+
+.public-stats__categories h3 {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  margin-bottom: 0.5rem;
+  text-align: center;
+}
+
+.public-stats__cat-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.35rem 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.public-stats__cat-row:last-child {
+  border-bottom: none;
+}
+
+.public-stats__cat-name {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+}
+
+.public-stats__cat-values {
+  display: flex;
+  gap: 0.6rem;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+}
+
+.public-stats__cat-attend {
+  color: var(--success);
+}
+
+.public-stats__cat-no-attend {
+  color: var(--danger);
+}
+
+.public-stats__cat-percent {
+  color: var(--text-muted);
+  margin-left: 0.3rem;
 }
 
 .auth-card h2 {

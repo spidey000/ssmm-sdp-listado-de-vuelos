@@ -1321,7 +1321,67 @@ function App() {
       {notice ? <section className="message message--ok">{notice}</section> : null}
 
       {showAuthGate ? (
-        <section className="auth-card">
+        <>
+          {flights.length > 0 && (
+            <section className="public-stats">
+              <div className="public-stats__header">
+                <h2>Estado operativo - Vuelo pubblico</h2>
+                <p>Datos actualizados en tiempo real</p>
+              </div>
+              <div className="public-stats__kpi-row">
+                <div className="public-stats__kpi">
+                  <div className="public-stats__kpi-label">Operados</div>
+                  <div className="public-stats__kpi-value">{totalOperated}</div>
+                </div>
+                <div className="public-stats__kpi">
+                  <div className="public-stats__kpi-label">Total Vuelos</div>
+                  <div className="public-stats__kpi-value">{dayScopedFlights.length}</div>
+                </div>
+                <div className="public-stats__kpi">
+                  <div className="public-stats__kpi-label">Fecha</div>
+                  <div className="public-stats__kpi-value public-stats__kpi-value--highlight">{selectedWorkDateLabel}</div>
+                </div>
+              </div>
+              <div className="public-stats__kpi-row">
+                <div className="public-stats__kpi">
+                  <div className="public-stats__kpi-label">S.MINIMOS (ATENDER)</div>
+                  <div className="public-stats__kpi-value public-stats__cat-attend">{totalAttendAssigned}</div>
+                </div>
+                <div className="public-stats__kpi">
+                  <div className="public-stats__kpi-label">CANCELABLES (NO ATENDER)</div>
+                  <div className="public-stats__kpi-value public-stats__cat-no-attend">{totalNoAttendAssigned}</div>
+                </div>
+                <div className="public-stats__kpi">
+                  <div className="public-stats__kpi-label">Sin Etiqueta</div>
+                  <div className="public-stats__kpi-value">{dayScopedFlights.length - totalAttendAssigned - totalNoAttendAssigned}</div>
+                </div>
+              </div>
+              <div className="public-stats__categories">
+                <h3>Resumen por Categoria</h3>
+                {progress.map((item) => {
+                  const catAttend = dayScopedFlights.filter(
+                    (f) => f.categoriaClasificacion === item.category && f.serviceFlag === 'ATENDER'
+                  ).length
+                  const catNoAttend = dayScopedFlights.filter(
+                    (f) => f.categoriaClasificacion === item.category && f.serviceFlag === 'NO_ATENDER'
+                  ).length
+                  const catTotal = item.total
+                  const attendPercent = catTotal > 0 ? ((catAttend / catTotal) * 100).toFixed(1) : '0.0'
+                  return (
+                    <div key={item.category} className="public-stats__cat-row">
+                      <span className="public-stats__cat-name">{item.category}</span>
+                      <div className="public-stats__cat-values">
+                        <span className="public-stats__cat-attend">ATENDER: {catAttend}</span>
+                        <span className="public-stats__cat-no-attend">NO ATENDER: {catNoAttend}</span>
+                        <span className="public-stats__cat-percent">({attendPercent}%)</span>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </section>
+          )}
+          <section className="auth-card auth-card--centered">
           <h2>Acceso OTP</h2>
           <p>Solo se envia OTP a emails presentes en la tabla de permitidos (`allowed_emails`).</p>
           <div className="auth-row">
@@ -1357,6 +1417,7 @@ function App() {
             </>
           ) : null}
         </section>
+        </>
       ) : (
         <>
           <section className="banner-card">
